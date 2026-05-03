@@ -7,9 +7,9 @@ from typing import Any
 from uuid import UUID
 
 import structlog
+from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from cryptography.fernet import Fernet
 
 from app.core.config import settings
 
@@ -94,8 +94,8 @@ def _get_fernet() -> Fernet:
     if not settings.TOKEN_ENCRYPTION_KEY:
         raise RuntimeError("TOKEN_ENCRYPTION_KEY is not set.")
     # Fernet requires a 32-byte url-safe base64-encoded key
-    # If the key provided is just 32 characters or not base64 encoded, 
-    # we can pad/encode it, but let's assume it's correctly formatted 
+    # If the key provided is just 32 characters or not base64 encoded,
+    # we can pad/encode it, but let's assume it's correctly formatted
     # or we can derive a safe key from it.
     import base64
     key = settings.TOKEN_ENCRYPTION_KEY.encode('utf-8')
@@ -103,14 +103,14 @@ def _get_fernet() -> Fernet:
         key = key.ljust(32, b'0')
     if len(key) > 32 and len(key) != 44:
         key = key[:32]
-    
+
     # Ensure it's urlsafe_b64encoded if it isn't already
     try:
         Fernet(key)
         final_key = key
     except (ValueError, TypeError):
         final_key = base64.urlsafe_b64encode(key[:32])
-        
+
     return Fernet(final_key)
 
 

@@ -4,11 +4,9 @@ Creates RenderJob, calls FFmpegRenderer, creates MediaAsset records,
 and updates ReelProject/ReelVersion status.
 """
 
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import structlog
 from fastapi import HTTPException
@@ -18,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.models import (
     AuditLog,
-    GenerationJob,
     JobStatus,
     MediaAsset,
     MediaAssetStatus,
@@ -29,9 +26,9 @@ from app.models.models import (
     RenderJob,
     WorkspaceMember,
 )
+from app.services.ai.base import SubtitleLine
 from app.services.rendering.ffmpeg_renderer import FFmpegRenderer, RenderParams
 from app.services.rendering.subtitles import write_srt_file
-from app.services.ai.base import SubtitleLine
 
 logger = structlog.get_logger(__name__)
 

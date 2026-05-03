@@ -1,12 +1,11 @@
-import uuid
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import User, Workspace, WorkspaceMember, AuditLog
-from app.schemas.schemas import UserCreate, AuthResponse, UserResponse, WorkspaceResponse
-from app.core.security import hash_password, verify_password, create_access_token
+from app.core.security import create_access_token, hash_password, verify_password
+from app.models.models import AuditLog, User, Workspace, WorkspaceMember
+from app.schemas.schemas import AuthResponse, UserCreate, UserResponse, WorkspaceResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -22,14 +21,14 @@ async def create_default_workspace(db: AsyncSession, user: User) -> Workspace:
     )
     db.add(workspace)
     await db.flush()  # To get workspace.id
-    
+
     member = WorkspaceMember(
         user_id=user.id,
         workspace_id=workspace.id,
         role="owner"
     )
     db.add(member)
-    
+
     audit = AuditLog(
         action="workspace_created",
         workspace_id=workspace.id,
@@ -58,9 +57,9 @@ async def register_user(db: AsyncSession, user_in: UserCreate) -> AuthResponse:
     )
     db.add(user)
     await db.flush()
-    
+
     workspace = await create_default_workspace(db, user)
-    
+
     # Audit log
     audit = AuditLog(
         action="user_registered",
@@ -74,9 +73,9 @@ async def register_user(db: AsyncSession, user_in: UserCreate) -> AuthResponse:
     await db.commit()
     await db.refresh(user)
     await db.refresh(workspace)
-    
+
     token = create_access_token(subject=user.id)
-    
+
     logger.info("user_registered", user_id=str(user.id))
     return AuthResponse(
         user=UserResponse.model_validate(user),

@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-import structlog
 from typing import Any
 
-from app.api.deps import DbSession, CurrentUser
-from app.schemas.schemas import UserCreate, LoginRequest, AuthResponse, TokenResponse, UserResponse
-from app.services.auth import register_user, authenticate_user
+import structlog
+from fastapi import APIRouter, HTTPException, status
+
+from app.api.deps import CurrentUser, DbSession
 from app.core.security import create_access_token
+from app.schemas.schemas import AuthResponse, LoginRequest, TokenResponse, UserCreate, UserResponse
+from app.services.auth import authenticate_user, register_user
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -28,7 +29,7 @@ async def login(login_in: LoginRequest, db: DbSession) -> Any:
     if not user.is_active:
         logger.warning("login_failed_inactive", user_id=str(user.id))
         raise HTTPException(status_code=400, detail="Inactive user")
-        
+
     token = create_access_token(subject=user.id)
     logger.info("user_logged_in", user_id=str(user.id))
     return {"access_token": token, "token_type": "bearer", "expires_in": 3600}

@@ -1,5 +1,6 @@
 from fastapi import APIRouter
-from app.api.v1.routers import auth, workspaces, reel_projects, media_assets, integrations
+
+from app.api.v1.routers import auth, integrations, media_assets, reel_projects, workspaces
 
 api_v1_router = APIRouter()
 

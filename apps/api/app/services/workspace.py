@@ -1,11 +1,12 @@
 import uuid
+
+import structlog
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
-import structlog
 
-from app.models.models import Workspace, WorkspaceMember, User
-from app.schemas.schemas import CreateWorkspaceRequest, WorkspaceResponse, WorkspaceMemberResponse
+from app.models.models import Workspace, WorkspaceMember
+from app.schemas.schemas import CreateWorkspaceRequest, WorkspaceMemberResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -24,7 +25,7 @@ async def get_workspace_by_id(db: AsyncSession, workspace_id: uuid.UUID, user_id
     member = result.scalars().first()
     if not member:
         raise HTTPException(status_code=403, detail="Not authorized to access this workspace")
-        
+
     workspace = await db.get(Workspace, workspace_id)
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -36,7 +37,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
     result = await db.execute(stmt)
     if result.scalars().first():
         raise HTTPException(status_code=400, detail="Workspace slug already taken")
-        
+
     workspace = Workspace(
         name=data.name,
         slug=data.slug,
@@ -45,7 +46,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
     )
     db.add(workspace)
     await db.flush()
-    
+
     member = WorkspaceMember(
         workspace_id=workspace.id,
         user_id=user_id,
@@ -59,7 +60,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
 async def get_workspace_members(db: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID) -> list[WorkspaceMemberResponse]:
     # First check authorization using the previous function
     await get_workspace_by_id(db, workspace_id, user_id)
-    
+
     stmt = select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace_id)
     result = await db.execute(stmt)
     members = result.scalars().all()

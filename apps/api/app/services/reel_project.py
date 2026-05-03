@@ -2,7 +2,6 @@
 Reel project service — create, list, retrieve, and enqueue mock generation.
 """
 
-import asyncio
 import uuid
 from typing import Any
 
@@ -10,7 +9,6 @@ import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.models import (
@@ -171,10 +169,11 @@ async def _run_mock_pipeline_inline(
     cta: str | None,
 ) -> None:
     """Run mock generation pipeline inline (GENERATION_MODE=sync)."""
+    from datetime import UTC, datetime
+
     from app.db.session import AsyncSessionLocal
     from app.models.models import JobStatus, ReelProjectStatus
     from app.services.ai.mock_provider import MockLLMProvider
-    from datetime import UTC, datetime
 
     async with AsyncSessionLocal() as db:
         try:

@@ -5,11 +5,11 @@ Handles Instagram OAuth and Connected Account flows.
 
 import os
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
@@ -42,7 +42,7 @@ async def get_instagram_status(
 ) -> dict[str, Any]:
     """Get current Instagram connection status for the user's workspace."""
     workspace_id = await _resolve_workspace(db, current_user.id)
-    
+
     stmt = select(SocialAccount).where(
         SocialAccount.workspace_id == workspace_id,
         SocialAccount.platform == "instagram",
@@ -81,7 +81,7 @@ async def connect_instagram(
 
     oauth = InstagramOAuth()
     auth_url = oauth.build_authorization_url(str(workspace_id), str(current_user.id))
-    
+
     logger.info("instagram_oauth_started", workspace_id=str(workspace_id), user_id=str(current_user.id))
     return {"authorization_url": auth_url}
 
@@ -124,7 +124,7 @@ async def instagram_callback(
         existing_account = (await db.execute(stmt)).scalars().first()
 
         encrypted_token = encrypt_token(account_data["access_token"])
-        
+
         # Calculate expiry
         import datetime
         expires_at = None
@@ -157,13 +157,13 @@ async def instagram_callback(
                 scopes_json=account_data["scopes"],
             )
             db.add(new_account)
-            
+
         await db.commit()
         logger.info("instagram_oauth_completed", workspace_id=str(workspace_id), user_id=str(user_id))
-        
+
         return RedirectResponse(f"{frontend_redirect}?connected=instagram")
 
-    except Exception as e:
+    except Exception:
         logger.exception("instagram_oauth_callback_error")
         return RedirectResponse(f"{frontend_redirect}?error=instagram_oauth_failed")
 
@@ -178,15 +178,15 @@ async def mock_connect_instagram(
     """Mock connection for local dev."""
     if settings.APP_ENV != "development" or os.environ.get("INSTAGRAM_INTEGRATION_MODE") != "mock":
         raise HTTPException(status_code=400, detail="Mock mode not enabled")
-        
+
     workspace_id = await _resolve_workspace(db, current_user.id)
-    
+
     stmt = select(SocialAccount).where(
         SocialAccount.workspace_id == workspace_id,
         SocialAccount.ig_user_id == "mock_ig_user_id"
     )
     existing_account = (await db.execute(stmt)).scalars().first()
-    
+
     if existing_account:
         existing_account.status = SocialAccountStatus.CONNECTED
         existing_account.disconnected_at = None
@@ -207,7 +207,7 @@ async def mock_connect_instagram(
             metadata_json={"is_mock": True}
         )
         db.add(new_account)
-        
+
     await db.commit()
     return {"status": "ok"}
 
@@ -222,23 +222,23 @@ async def disconnect_instagram(
 ) -> dict[str, str]:
     """Soft-disconnect an Instagram account."""
     workspace_id = await _resolve_workspace(db, current_user.id)
-    
+
     stmt = select(SocialAccount).where(
         SocialAccount.id == account_id,
         SocialAccount.workspace_id == workspace_id
     )
     account = (await db.execute(stmt)).scalars().first()
-    
+
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-        
+
     account.status = SocialAccountStatus.ERROR # Using ERROR or we can add DISCONNECTED
     # Actually prompt says: mark as disconnected or delete. We'll mark as error/disconnected_at
     account.disconnected_at = datetime.now(UTC)
-    
+
     # Can also clear the token
     account.access_token_encrypted = encrypt_token("disconnected")
-    
+
     await db.commit()
     logger.info("instagram_oauth_disconnected", account_id=str(account_id), workspace_id=str(workspace_id))
     return {"status": "disconnected"}
@@ -253,12 +253,12 @@ async def list_instagram_accounts(
 ) -> Any:
     """List connected Instagram accounts for current workspace."""
     workspace_id = await _resolve_workspace(db, current_user.id)
-    
+
     stmt = select(SocialAccount).where(
         SocialAccount.workspace_id == workspace_id,
         SocialAccount.platform == "instagram"
     ).order_by(SocialAccount.created_at.desc())
-    
+
     accounts = (await db.execute(stmt)).scalars().all()
     return [SocialAccountResponse.model_validate(a) for a in accounts]
 

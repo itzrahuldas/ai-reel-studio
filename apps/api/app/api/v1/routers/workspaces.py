@@ -1,11 +1,17 @@
 import uuid
 from typing import Any
-from fastapi import APIRouter, Depends
-import structlog
 
-from app.api.deps import DbSession, CurrentUser
-from app.schemas.schemas import WorkspaceResponse, CreateWorkspaceRequest, WorkspaceMemberResponse
-from app.services.workspace import get_user_workspaces, create_workspace, get_workspace_by_id, get_workspace_members
+import structlog
+from fastapi import APIRouter
+
+from app.api.deps import CurrentUser, DbSession
+from app.schemas.schemas import CreateWorkspaceRequest, WorkspaceMemberResponse, WorkspaceResponse
+from app.services.workspace import (
+    create_workspace,
+    get_user_workspaces,
+    get_workspace_by_id,
+    get_workspace_members,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
