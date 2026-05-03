@@ -2,9 +2,9 @@
 Tests for Instagram integrations API.
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -38,19 +38,18 @@ def test_mock_connect_instagram_success(mock_ws, mock_get, mock_decode, monkeypa
     from app.core.config import settings
     # Ensure settings.APP_ENV is development for the test context
     settings.APP_ENV = "development"
-    
+
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_get.return_value = _make_user()
     mock_ws.return_value = FAKE_WORKSPACE_ID
-    
+
     with patch("app.api.v1.routers.integrations.DbSession") as mock_db:
         # Avoid database dependencies in test
         session = MagicMock()
-        
-        from fastapi import Request
+
         # Override the dependency to bypass db execution
         app.dependency_overrides[mock_db] = lambda: session
-        
+
         # we'll just mock the db execution here directly inside the route logic
         # For a full test we would mock the database session properly.
         # But this is just a smoke test.

@@ -40,7 +40,7 @@ export default function IntegrationsPage() {
     onSuccess: (data) => {
       window.location.href = data.authorization_url;
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       alert(err.message || "Failed to start connection");
     },
   });
@@ -51,7 +51,7 @@ export default function IntegrationsPage() {
       alert("Mock account connected");
       queryClient.invalidateQueries({ queryKey: ["instagram-status"] });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       alert(err.message || "Failed mock connection");
     },
   });

@@ -148,7 +148,7 @@ class ReelProjectResponse(OrmBaseModel):
     created_at: datetime
     updated_at: datetime
     # Enriched detail (optional — populated on detail endpoint)
-    latest_version: ReelVersionResponse | None = None
+    latest_version: "ReelVersionResponse | None" = None
 
 
 class CreateReelProjectResponse(BaseModel):
@@ -173,27 +173,7 @@ class RejectVersionRequest(BaseModel):
     reason: str | None = Field(None, max_length=1000)
 
 
-# ── Publish Jobs ──────────────────────────────────────────────────────────────
 
-class CreatePublishJobRequest(BaseModel):
-    project_id: UUID
-    social_account_id: UUID
-    schedule_time: datetime | None = None
-
-
-class PublishJobResponse(OrmBaseModel):
-    id: UUID
-    project_id: UUID
-    version_id: UUID
-    social_account_id: UUID
-    status: str
-    ig_container_id: str | None
-    ig_media_id: str | None
-    scheduled_for: datetime | None
-    published_at: datetime | None
-    error_message: str | None
-    created_at: datetime
-    updated_at: datetime
 
 
 # ── Social Accounts ───────────────────────────────────────────────────────────
@@ -256,6 +236,55 @@ class CreateRenderJobResponse(BaseModel):
     render_job: RenderJobResponse
     project: ReelProjectResponse
     version: ReelVersionResponse
+
+
+# ── Editor Schemas ────────────────────────────────────────────────────────────
+
+class StoryboardSceneInput(BaseModel):
+    scene_number: int | None = None
+    start_time: float = Field(ge=0)
+    end_time: float = Field(gt=0)
+    visual_description: str
+    text_overlay: str | None = None
+    voiceover_text: str | None = None
+
+class SubtitleLineInput(BaseModel):
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str
+
+class RenderSettingsInput(BaseModel):
+    duration_seconds: int | None = Field(None, gt=0, le=60)
+    resolution: str | None = None
+    fps: int | None = None
+    subtitle_style: str | None = None
+    text_position: str | None = None
+    cta_position: str | None = None
+    include_caption_burn_in: bool | None = None
+
+class UpdateReelVersionRequest(BaseModel):
+    hook: str | None = Field(None, max_length=500)
+    script: str | None = Field(None, max_length=2000)
+    storyboard: list[StoryboardSceneInput] | None = None
+    voiceover_text: str | None = Field(None, max_length=2000)
+    subtitle_lines: list[SubtitleLineInput] | None = None
+    caption: str | None = Field(None, max_length=2200)
+    hashtags: list[str] | None = Field(None, max_length=30)
+    video_prompt: str | None = Field(None, max_length=1000)
+    render_settings: RenderSettingsInput | None = None
+
+class ReelVersionEditorResponse(BaseModel):
+    project: ReelProjectResponse
+    version: ReelVersionResponse
+    can_edit: bool
+    can_render: bool
+    can_publish: bool
+    has_unrendered_edits: bool
+
+class SaveEditorDraftResponse(BaseModel):
+    project: ReelProjectResponse
+    version: ReelVersionResponse
+    message: str
 
 
 # ── Publish Jobs ──────────────────────────────────────────────────────────────

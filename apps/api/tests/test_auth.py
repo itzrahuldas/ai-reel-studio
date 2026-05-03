@@ -1,5 +1,5 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -19,7 +19,7 @@ def test_register_user(mock_register):
         "access_token": "fake-token",
         "token_type": "bearer"
     }
-    
+
     response = client.post(
         "/api/v1/auth/register",
         json={"email": "test@example.com", "password": "password123", "full_name": "Test"}
@@ -33,9 +33,9 @@ def test_login_user(mock_auth):
     class MockUser:
         id = "123"
         is_active = True
-    
+
     mock_auth.return_value = MockUser()
-    
+
     response = client.post(
         "/api/v1/auth/login",
         json={"email": "test@example.com", "password": "password123"}
@@ -46,7 +46,7 @@ def test_login_user(mock_auth):
 @patch("app.api.v1.routers.auth.authenticate_user", new_callable=AsyncMock)
 def test_login_wrong_password(mock_auth):
     mock_auth.return_value = None
-    
+
     response = client.post(
         "/api/v1/auth/login",
         json={"email": "test@example.com", "password": "wrong"}

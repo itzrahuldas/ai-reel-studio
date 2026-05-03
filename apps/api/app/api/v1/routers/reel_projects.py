@@ -12,15 +12,17 @@ from fastapi import APIRouter
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.schemas import (
     CreatePublishJobRequest,
-    CreatePublishJobResponse,
     CreateReelProjectRequest,
     CreateReelProjectResponse,
     CreateRenderJobResponse,
     GenerationJobResponse,
     PublishJobResponse,
     ReelProjectResponse,
+    ReelVersionEditorResponse,
     ReelVersionResponse,
     RenderJobResponse,
+    SaveEditorDraftResponse,
+    UpdateReelVersionRequest,
 )
 from app.services.publish_service import create_publish_job, get_publish_jobs, retry_publish_job
 from app.services.reel_project import (
@@ -120,9 +122,10 @@ async def render_project(
     project_id: uuid.UUID,
     current_user: CurrentUser,
     db: DbSession,
+    version_id: uuid.UUID | None = None,
 ) -> Any:
-    """Create a render job for the latest version and enqueue FFmpeg render task."""
-    render_job, project, version = await create_render_job(db, current_user.id, project_id)
+    """Create a render job for the specified or latest version and enqueue FFmpeg render task."""
+    render_job, project, version = await create_render_job(db, current_user.id, project_id, version_id)
     return {
         "render_job": RenderJobResponse.model_validate(render_job),
         "project": ReelProjectResponse.model_validate(project),
@@ -141,7 +144,44 @@ async def list_render_jobs(
     return [RenderJobResponse.model_validate(j) for j in jobs]
 
 
-@router.post("/{project_id}/publish", status_code=201, response_model=CreatePublishJobResponse)
+# ── Editor ────────────────────────────────────────────────────────────────────
+
+from app.services.editor_service import clone_reel_version, get_editor_data, update_reel_version
+
+
+@router.get("/{project_id}/editor", response_model=ReelVersionEditorResponse)
+async def get_project_editor_data(
+    project_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Return editable project/version data for the current user."""
+    return await get_editor_data(db, current_user.id, project_id)
+
+@router.put("/{project_id}/versions/{version_id}", response_model=SaveEditorDraftResponse)
+async def update_project_version(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    data: UpdateReelVersionRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Save edits to a version or create a safe new version depending on version state."""
+    return await update_reel_version(db, current_user.id, project_id, version_id, data)
+
+@router.post("/{project_id}/versions/{version_id}/clone", response_model=ReelVersionResponse)
+async def clone_project_version(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Clone a version for editing."""
+    version = await clone_reel_version(db, current_user.id, project_id, version_id)
+    return ReelVersionResponse.model_validate(version)
+
+
+# ── Publishing ────────────────────────────────────────────────────────────────
 async def publish_project(
     project_id: uuid.UUID,
     data: CreatePublishJobRequest,

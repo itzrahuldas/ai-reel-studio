@@ -369,6 +369,12 @@ export default function ReelDetailPage() {
             >
               {regenerateMutation.isPending ? "Regenerating..." : "Regenerate"}
             </button>
+            <Link 
+              href={`/dashboard/reels/${project.id}/edit`}
+              className={`btn-secondary text-sm ${isGenerating || isRendering ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              Edit Reel
+            </Link>
             {canRender && (
               <button
                 id="render-btn"

@@ -195,6 +195,58 @@ export interface CreatePublishJobResponse {
   version: ReelVersion;
 }
 
+export interface StoryboardSceneInput {
+  scene_number?: number;
+  start_time: number;
+  end_time: number;
+  visual_description: string;
+  text_overlay?: string;
+  voiceover_text?: string;
+}
+
+export interface SubtitleLineInput {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+}
+
+export interface RenderSettingsInput {
+  duration_seconds?: number;
+  resolution?: string;
+  fps?: number;
+  subtitle_style?: string;
+  text_position?: string;
+  cta_position?: string;
+  include_caption_burn_in?: boolean;
+}
+
+export interface UpdateReelVersionRequest {
+  hook?: string;
+  script?: string;
+  storyboard?: StoryboardSceneInput[];
+  voiceover_text?: string;
+  subtitle_lines?: SubtitleLineInput[];
+  caption?: string;
+  hashtags?: string[];
+  video_prompt?: string;
+  render_settings?: RenderSettingsInput;
+}
+
+export interface ReelVersionEditorResponse {
+  project: ReelProject;
+  version: ReelVersion;
+  can_edit: boolean;
+  can_render: boolean;
+  can_publish: boolean;
+  has_unrendered_edits: boolean;
+}
+
+export interface SaveEditorDraftResponse {
+  project: ReelProject;
+  version: ReelVersion;
+  message: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -360,16 +412,21 @@ class ApiClient {
   }
 
   /**
-   * Trigger rendering for the latest version.
+   * Trigger rendering for the specified or latest version.
    */
   async renderReelProject(
-    projectId: string
+    projectId: string,
+    versionId?: string
   ): Promise<{ render_job: RenderJob; project: ReelProject; version: ReelVersion }> {
+    let url = `/api/v1/reel-projects/${projectId}/render`;
+    if (versionId) {
+      url += `?version_id=${versionId}`;
+    }
     const res = await this.client.post<{
       render_job: RenderJob;
       project: ReelProject;
       version: ReelVersion;
-    }>(`/api/v1/reel-projects/${projectId}/render`);
+    }>(url);
     return res.data;
   }
 
@@ -379,6 +436,34 @@ class ApiClient {
   async getRenderJobs(projectId: string): Promise<RenderJob[]> {
     const res = await this.client.get<RenderJob[]>(
       `/api/v1/reel-projects/${projectId}/render-jobs`
+    );
+    return res.data;
+  }
+
+  // ── Editor ─────────────────────────────────────────────────────────────────
+
+  async getReelEditorData(projectId: string): Promise<ReelVersionEditorResponse> {
+    const res = await this.client.get<ReelVersionEditorResponse>(
+      `/api/v1/reel-projects/${projectId}/editor`
+    );
+    return res.data;
+  }
+
+  async updateReelVersion(
+    projectId: string,
+    versionId: string,
+    data: UpdateReelVersionRequest
+  ): Promise<SaveEditorDraftResponse> {
+    const res = await this.client.put<SaveEditorDraftResponse>(
+      `/api/v1/reel-projects/${projectId}/versions/${versionId}`,
+      data
+    );
+    return res.data;
+  }
+
+  async cloneReelVersion(projectId: string, versionId: string): Promise<ReelVersion> {
+    const res = await this.client.post<ReelVersion>(
+      `/api/v1/reel-projects/${projectId}/versions/${versionId}/clone`
     );
     return res.data;
   }

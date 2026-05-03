@@ -14,23 +14,19 @@ Test categories:
 - Worker task (idempotency, failure handling)
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.models import (
     GenerationJob,
     JobStatus,
-    MediaAsset,
-    MediaAssetStatus,
-    MediaAssetType,
     ReelProject,
     ReelProjectStatus,
     ReelVersion,
-    WorkspaceMember,
-    WorkspaceMemberRole,
 )
 
 client = TestClient(app)
@@ -346,8 +342,8 @@ def test_get_render_jobs(mock_get_jobs, mock_decode):
 @pytest.mark.asyncio
 async def test_sync_pipeline_produces_valid_output():
     """Sync pipeline creates valid CreativePlan via mock provider."""
-    from app.services.ai.mock_provider import MockLLMProvider
     from app.services.ai.base import CreativePlan
+    from app.services.ai.mock_provider import MockLLMProvider
 
     provider = MockLLMProvider()
     plan = await provider.generate_creative_plan(

@@ -259,6 +259,8 @@ class ReelVersion(TimestampMixin, Base):
     video_prompt: Mapped[str | None] = mapped_column(Text)
     estimated_duration: Mapped[int | None] = mapped_column(Integer)
     moderation_flags: Mapped[dict | None] = mapped_column(JSONB)
+    render_settings: Mapped[dict | None] = mapped_column("render_settings", JSONB)
+    edit_metadata: Mapped[dict | None] = mapped_column("edit_metadata", JSONB)
     audio_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
     video_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
     rendered_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))

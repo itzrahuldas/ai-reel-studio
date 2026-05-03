@@ -5,17 +5,18 @@ Revises: 0002_add_render_job_fields
 Create Date: 2026-05-03 17:05:00.000000
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
 revision: str = '0003_update_social_account_fields'
-down_revision: Union[str, None] = '0002_add_render_job_fields'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '0002_add_render_job_fields'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -27,7 +28,7 @@ def upgrade() -> None:
 
     # Drop old array column and add new JSONB ones
     op.drop_column('social_accounts', 'scopes')
-    
+
     # Add new columns
     op.add_column('social_accounts', sa.Column('account_type', sa.String(length=50), nullable=True))
     op.add_column('social_accounts', sa.Column('page_name', sa.String(length=255), nullable=True))
@@ -43,10 +44,10 @@ def downgrade() -> None:
     op.drop_column('social_accounts', 'scopes_json')
     op.drop_column('social_accounts', 'page_name')
     op.drop_column('social_accounts', 'account_type')
-    
+
     # Add back old array column
     op.add_column('social_accounts', sa.Column('scopes', postgresql.ARRAY(sa.String()), autoincrement=False, nullable=True))
-    
+
     # Revert renamed columns
     op.alter_column('social_accounts', 'page_id', new_column_name='platform_page_id')
     op.alter_column('social_accounts', 'ig_user_id', new_column_name='platform_user_id')
