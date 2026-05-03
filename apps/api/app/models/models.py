@@ -1,0 +1,346 @@
+"""
+SQLAlchemy models for AI Reel Studio.
+All models use UUID primary keys, created_at/updated_at timestamps,
+and status enums.
+"""
+
+import enum
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.session import Base
+
+# ── Status Enums ────────────────────────────────────────────────────────────
+
+
+class ReelProjectStatus(str, enum.Enum):
+    DRAFT = "draft"
+    SCRIPT_GENERATING = "script_generating"
+    SCRIPT_READY = "script_ready"
+    VIDEO_GENERATING = "video_generating"
+    AUDIO_GENERATING = "audio_generating"
+    RENDERING = "rendering"
+    READY_FOR_REVIEW = "ready_for_review"
+    APPROVED = "approved"
+    PUBLISHING = "publishing"
+    IG_PROCESSING = "ig_processing"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    FAILED_SCRIPT = "failed_script"
+    FAILED_VIDEO = "failed_video"
+    FAILED_AUDIO = "failed_audio"
+    FAILED_RENDER = "failed_render"
+    FAILED_INSTAGRAM_UPLOAD = "failed_instagram_upload"
+    FAILED_INSTAGRAM_PUBLISH = "failed_instagram_publish"
+
+
+class SocialAccountStatus(str, enum.Enum):
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+    ERROR = "error"
+
+
+class MediaAssetStatus(str, enum.Enum):
+    PENDING_UPLOAD = "pending_upload"
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+
+
+class MediaAssetType(str, enum.Enum):
+    SOURCE_IMAGE = "source_image"
+    RAW_VIDEO = "raw_video"
+    AUDIO = "audio"
+    RENDERED_VIDEO = "rendered_video"
+    THUMBNAIL = "thumbnail"
+
+
+class JobStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class PublishJobStatus(str, enum.Enum):
+    QUEUED = "queued"
+    CONTAINER_CREATED = "container_created"
+    POLLING = "polling"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class WorkspacePlan(str, enum.Enum):
+    FREE = "free"
+    PRO = "pro"
+    AGENCY = "agency"
+
+
+class WorkspaceMemberRole(str, enum.Enum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+    VIEWER = "viewer"
+
+
+# ── Mixin ───────────────────────────────────────────────────────────────────
+
+
+class TimestampMixin:
+    """Adds created_at and updated_at to any model."""
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+# ── Models ───────────────────────────────────────────────────────────────────
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    workspace_memberships: Mapped[list["WorkspaceMember"]] = relationship(back_populates="user")
+    owned_workspaces: Mapped[list["Workspace"]] = relationship(back_populates="owner")
+
+
+class Workspace(TimestampMixin, Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    plan: Mapped[WorkspacePlan] = mapped_column(
+        Enum(WorkspacePlan), default=WorkspacePlan.FREE, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    owner: Mapped["User"] = relationship(back_populates="owned_workspaces")
+    members: Mapped[list["WorkspaceMember"]] = relationship(back_populates="workspace")
+    social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="workspace")
+    reel_projects: Mapped[list["ReelProject"]] = relationship(back_populates="workspace")
+
+
+class WorkspaceMember(TimestampMixin, Base):
+    __tablename__ = "workspace_members"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[WorkspaceMemberRole] = mapped_column(Enum(WorkspaceMemberRole), nullable=False)
+    invited_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="members")
+    user: Mapped["User"] = relationship(back_populates="workspace_memberships", foreign_keys=[user_id])
+
+
+class SocialAccount(TimestampMixin, Base):
+    __tablename__ = "social_accounts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(50), nullable=False, default="instagram")
+    platform_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    platform_username: Mapped[str | None] = mapped_column(String(255))
+    platform_page_id: Mapped[str | None] = mapped_column(String(255))
+    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[SocialAccountStatus] = mapped_column(
+        Enum(SocialAccountStatus), default=SocialAccountStatus.CONNECTED, nullable=False
+    )
+    scopes: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="social_accounts")
+    publish_jobs: Mapped[list["PublishJob"]] = relationship(back_populates="social_account")
+
+
+class MediaAsset(TimestampMixin, Base):
+    __tablename__ = "media_assets"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    project_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"))
+    version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"))
+    asset_type: Mapped[MediaAssetType] = mapped_column(Enum(MediaAssetType), nullable=False)
+    s3_key: Mapped[str] = mapped_column(Text, nullable=False)
+    s3_bucket: Mapped[str] = mapped_column(String(255), nullable=False)
+    filename: Mapped[str | None] = mapped_column(String(500))
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    status: Mapped[MediaAssetStatus] = mapped_column(
+        Enum(MediaAssetStatus), default=MediaAssetStatus.PENDING_UPLOAD, nullable=False
+    )
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+
+
+class ReelProject(TimestampMixin, Base):
+    __tablename__ = "reel_projects"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(20), default="en", nullable=False)
+    tone: Mapped[str | None] = mapped_column(String(100))
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    cta_text: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[ReelProjectStatus] = mapped_column(
+        Enum(ReelProjectStatus), default=ReelProjectStatus.DRAFT, nullable=False, index=True
+    )
+    latest_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id", use_alter=True))
+    source_image_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="reel_projects")
+    versions: Mapped[list["ReelVersion"]] = relationship(
+        back_populates="project",
+        foreign_keys="ReelVersion.project_id",
+    )
+    generation_jobs: Mapped[list["GenerationJob"]] = relationship(back_populates="project")
+    publish_jobs: Mapped[list["PublishJob"]] = relationship(back_populates="project")
+
+
+class ReelVersion(TimestampMixin, Base):
+    __tablename__ = "reel_versions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    hook: Mapped[str | None] = mapped_column(Text)
+    script: Mapped[str | None] = mapped_column(Text)
+    scenes: Mapped[list | None] = mapped_column(JSONB)
+    voiceover_text: Mapped[str | None] = mapped_column(Text)
+    subtitle_lines: Mapped[list | None] = mapped_column(JSONB)
+    caption: Mapped[str | None] = mapped_column(Text)
+    hashtags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+    video_prompt: Mapped[str | None] = mapped_column(Text)
+    estimated_duration: Mapped[int | None] = mapped_column(Integer)
+    moderation_flags: Mapped[dict | None] = mapped_column(JSONB)
+    audio_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
+    video_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
+    rendered_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
+    thumbnail_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
+    status: Mapped[ReelProjectStatus] = mapped_column(
+        Enum(ReelProjectStatus), default=ReelProjectStatus.DRAFT, nullable=False
+    )
+    approved_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+
+    # Relationships
+    project: Mapped["ReelProject"] = relationship(back_populates="versions", foreign_keys=[project_id])
+    render_jobs: Mapped[list["RenderJob"]] = relationship(back_populates="version")
+
+
+class GenerationJob(TimestampMixin, Base):
+    __tablename__ = "generation_jobs"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"), nullable=False, index=True)
+    version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"))
+    celery_task_id: Mapped[str | None] = mapped_column(String(255))
+    job_type: Mapped[str] = mapped_column(String(50), default="full_generation", nullable=False)
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.QUEUED, nullable=False, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    input_payload: Mapped[dict | None] = mapped_column(JSONB)
+    output_payload: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Relationships
+    project: Mapped["ReelProject"] = relationship(back_populates="generation_jobs")
+
+
+class RenderJob(TimestampMixin, Base):
+    __tablename__ = "render_jobs"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"), nullable=False)
+    celery_task_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.QUEUED, nullable=False)
+    renderer: Mapped[str] = mapped_column(String(50), default="ffmpeg", nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    command_log: Mapped[str | None] = mapped_column(Text)
+
+    # Relationships
+    version: Mapped["ReelVersion"] = relationship(back_populates="render_jobs")
+
+
+class PublishJob(TimestampMixin, Base):
+    __tablename__ = "publish_jobs"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"), nullable=False)
+    version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"), nullable=False)
+    social_account_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("social_accounts.id"), nullable=False, index=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[PublishJobStatus] = mapped_column(Enum(PublishJobStatus), default=PublishJobStatus.QUEUED, nullable=False, index=True)
+    ig_container_id: Mapped[str | None] = mapped_column(String(255))
+    ig_media_id: Mapped[str | None] = mapped_column(String(255))
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Relationships
+    project: Mapped["ReelProject"] = relationship(back_populates="publish_jobs")
+    social_account: Mapped["SocialAccount"] = relationship(back_populates="publish_jobs")
+
+
+class AuditLog(Base):
+    """Immutable audit log — never updated, only appended."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), index=True)
+    user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    resource_type: Mapped[str | None] = mapped_column(String(100))
+    resource_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )

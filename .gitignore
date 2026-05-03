@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.next/
+.env
+.env.local
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+alembic/versions/*
+!alembic/versions/__init__.py
+.pytest_cache/
+.coverage
+.ruff_cache/

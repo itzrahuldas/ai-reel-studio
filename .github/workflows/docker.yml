@@ -1,0 +1,15 @@
+name: Docker Build Check
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**/Dockerfile'
+      - 'docker-compose.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build Docker Compose services
+      run: docker compose build
