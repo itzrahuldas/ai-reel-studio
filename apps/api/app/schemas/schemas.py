@@ -299,10 +299,17 @@ class PublishJobResponse(OrmBaseModel):
     ig_container_id: str | None
     ig_media_id: str | None
     scheduled_for: datetime | None
+    schedule_timezone: str | None
+    queued_at: datetime | None
+    locked_at: datetime | None
     started_at: datetime | None
     published_at: datetime | None
+    cancelled_at: datetime | None
+    cancel_reason: str | None
     error_message: str | None
     retry_count: int
+    execution_attempts: int
+    next_attempt_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -312,6 +319,14 @@ class CreatePublishJobRequest(BaseModel):
     caption: str | None = None
     share_to_feed: bool = True
     allow_comments: bool = True
+
+class SchedulePublishJobRequest(BaseModel):
+    social_account_id: UUID
+    caption: str | None = None
+    share_to_feed: bool = True
+    allow_comments: bool = True
+    scheduled_at: datetime
+    schedule_timezone: str = "UTC"
 
 
 class CreatePublishJobResponse(BaseModel):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -303,6 +303,23 @@ export default function ReelDetailPage() {
     },
   });
 
+  const scheduleMutation = useMutation({
+    mutationFn: (data: { social_account_id: string; scheduled_at: string; schedule_timezone: string }) => 
+      apiClient.scheduleReelProject(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
+      queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
+      setScheduleAccountId(null); // close form
+    },
+  });
+
+  const cancelScheduleMutation = useMutation({
+    mutationFn: (jobId: string) => apiClient.cancelScheduledPublishJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
+    },
+  });
+
   const retryPublishMutation = useMutation({
     mutationFn: (jobId: string) => apiClient.retryPublishJob(jobId),
     onSuccess: () => {
@@ -310,6 +327,10 @@ export default function ReelDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
     },
   });
+
+  const [scheduleAccountId, setScheduleAccountId] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
 
   if (isLoading) {
     return (
@@ -496,25 +517,70 @@ export default function ReelDetailPage() {
             ) : (
               <div className="space-y-4">
                 {instagramStatus.accounts.map((acc) => (
-                  <div key={acc.id} className="flex items-center justify-between p-3 bg-gray-800/60 rounded-lg border border-gray-700">
-                    <div>
-                      <p className="text-sm font-medium text-white">@{acc.username}</p>
-                      {acc.status === "reconnect_required" && (
-                        <p className="text-xs text-red-400">Reconnect required</p>
-                      )}
+                  <div key={acc.id} className="p-3 bg-gray-800/60 rounded-lg border border-gray-700 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-white">@{acc.username}</p>
+                        {acc.status === "reconnect_required" && (
+                          <p className="text-xs text-red-400">Reconnect required</p>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        {acc.status === "reconnect_required" ? (
+                          <Link href="/dashboard/integrations" className="btn-secondary text-xs px-2 py-1 text-red-400 border-red-500/30">
+                            Fix Connection
+                          </Link>
+                        ) : (
+                          <>
+                            <button
+                              className="btn-secondary text-xs px-3 py-1.5"
+                              onClick={() => setScheduleAccountId(scheduleAccountId === acc.id ? null : acc.id)}
+                            >
+                              Schedule
+                            </button>
+                            <button
+                              className="btn-primary text-xs px-3 py-1.5"
+                              onClick={() => publishMutation.mutate(acc.id)}
+                              disabled={publishMutation.isPending || project.status === "publishing" || project.status === "ig_processing" || project.status === "published"}
+                            >
+                              {publishMutation.isPending ? "Starting..." : project.status === "published" ? "Published" : "Publish Now"}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    {acc.status === "reconnect_required" ? (
-                      <Link href="/dashboard/integrations" className="btn-secondary text-xs px-2 py-1 text-red-400 border-red-500/30">
-                        Fix Connection
-                      </Link>
-                    ) : (
-                      <button
-                        className="btn-primary text-xs px-3 py-1.5"
-                        onClick={() => publishMutation.mutate(acc.id)}
-                        disabled={publishMutation.isPending || project.status === "publishing" || project.status === "ig_processing" || project.status === "published"}
-                      >
-                        {publishMutation.isPending ? "Starting..." : project.status === "published" ? "Published" : "Publish to Feed"}
-                      </button>
+                    {scheduleAccountId === acc.id && (
+                      <div className="p-3 bg-gray-900 rounded border border-gray-700 flex flex-col gap-3">
+                        <div className="flex gap-3">
+                          <input 
+                            type="date" 
+                            value={scheduleDate}
+                            onChange={(e) => setScheduleDate(e.target.value)}
+                            className="bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1 flex-1"
+                          />
+                          <input 
+                            type="time" 
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            className="bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1 flex-1"
+                          />
+                        </div>
+                        <button
+                          className="btn-primary text-sm"
+                          disabled={!scheduleDate || !scheduleTime || scheduleMutation.isPending}
+                          onClick={() => {
+                            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                            const dt = new Date(`${scheduleDate}T${scheduleTime}:00`);
+                            scheduleMutation.mutate({
+                              social_account_id: acc.id,
+                              scheduled_at: dt.toISOString(),
+                              schedule_timezone: tz
+                            });
+                          }}
+                        >
+                          {scheduleMutation.isPending ? "Scheduling..." : "Confirm Schedule"}
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -544,6 +610,18 @@ export default function ReelDetailPage() {
                           >
                             Retry
                           </button>
+                        )}
+                        {job.status === 'scheduled' && (
+                          <div className="mt-2 space-y-1">
+                            <p className="text-blue-400">Scheduled for: {new Date(job.scheduled_for!).toLocaleString()}</p>
+                            <button
+                              onClick={() => cancelScheduleMutation.mutate(job.id)}
+                              disabled={cancelScheduleMutation.isPending}
+                              className="text-red-400 hover:text-red-300 underline"
+                            >
+                              Cancel Schedule
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}

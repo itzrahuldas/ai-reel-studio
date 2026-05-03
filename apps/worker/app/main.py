@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.generate_reel",
         "app.tasks.render_reel",
         "app.tasks.publish_reel",
+        "app.tasks.scheduler",
     ],
 )
 
@@ -33,4 +34,10 @@ celery_app.conf.update(
     task_default_queue="default",
     task_default_retry_delay=30,    # 30 seconds between retries
     task_max_retries=3,
+    beat_schedule={
+        "scan-scheduled-publish-jobs-every-minute": {
+            "task": "app.tasks.scheduler.scan_scheduled_publish_jobs",
+            "schedule": 60.0,  # every 60 seconds
+        },
+    },
 )

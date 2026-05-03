@@ -136,7 +136,7 @@ async def create_publish_job(
     data: Any
 ) -> tuple[PublishJob, ReelProject, ReelVersion]:
     """
-    Create a new publish job and enqueue it.
+    Create a new publish job and enqueue it immediately.
     data is schemas.CreatePublishJobRequest.
     """
     project, version, social_account, asset = await validate_publish_preflight(
@@ -271,4 +271,95 @@ async def retry_publish_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.U
                 await run_publish_pipeline(session, str(job.id))
         asyncio.create_task(_run_sync())
 
+    return job
+
+async def schedule_publish_job(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    data: Any  # SchedulePublishJobRequest
+) -> tuple[PublishJob, ReelProject, ReelVersion]:
+    """
+    Schedule a publish job for a future time.
+    """
+    from datetime import timedelta
+    
+    project, version, social_account, asset = await validate_publish_preflight(
+        db, user_id, project_id, data.social_account_id
+    )
+
+    now = datetime.now(UTC)
+    if data.scheduled_at < now + timedelta(minutes=2):
+        raise HTTPException(status_code=400, detail="Scheduled time must be at least 2 minutes in the future")
+        
+    if data.scheduled_at > now + timedelta(days=90):
+        raise HTTPException(status_code=400, detail="Scheduled time cannot be more than 90 days in the future")
+
+    caption = data.caption if data.caption is not None else version.caption
+    if not caption:
+        caption = ""
+
+    if data.caption is None and version.hashtags:
+        caption += "\n\n" + " ".join(f"#{tag}" for tag in version.hashtags)
+
+    _ = build_public_media_url(asset)
+
+    job = PublishJob(
+        project_id=project.id,
+        version_id=version.id,
+        social_account_id=social_account.id,
+        status=PublishJobStatus.SCHEDULED,
+        scheduled_for=data.scheduled_at,
+        schedule_timezone=data.schedule_timezone,
+        input_payload={
+            "caption": caption,
+            "share_to_feed": data.share_to_feed,
+            "allow_comments": data.allow_comments,
+            "video_url": build_public_media_url(asset)
+        }
+    )
+    db.add(job)
+
+    log = AuditLog(
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        action="publish_job_scheduled",
+        entity_type="reel_project",
+        entity_id=project.id,
+        details={"job_id": str(job.id), "social_account_id": str(social_account.id), "scheduled_for": data.scheduled_at.isoformat()}
+    )
+    db.add(log)
+
+    await db.commit()
+    await db.refresh(job)
+
+    return job, project, version
+
+async def cancel_scheduled_publish_job(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> PublishJob:
+    """
+    Cancel a scheduled publish job.
+    """
+    stmt = (
+        select(PublishJob)
+        .where(PublishJob.id == job_id)
+        .join(ReelProject, ReelProject.id == PublishJob.project_id)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == ReelProject.workspace_id)
+        .where(WorkspaceMember.user_id == user_id)
+    )
+    job = (await db.execute(stmt)).scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+
+    if job.status != PublishJobStatus.SCHEDULED:
+        raise HTTPException(status_code=400, detail="Only scheduled jobs can be cancelled")
+
+    job.status = PublishJobStatus.CANCELLED
+    job.cancelled_at = datetime.now(UTC)
+    job.cancel_reason = "Cancelled by user"
+
+    await db.commit()
     return job

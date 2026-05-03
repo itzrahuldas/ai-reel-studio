@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     CreateReelProjectRequest,
     CreateReelProjectResponse,
     CreateRenderJobResponse,
+    SchedulePublishJobRequest,
     GenerationJobResponse,
     PublishJobResponse,
     ReelProjectResponse,
@@ -182,6 +183,7 @@ async def clone_project_version(
 
 
 # ── Publishing ────────────────────────────────────────────────────────────────
+@router.post("/{project_id}/publish", response_model=CreatePublishJobResponse)
 async def publish_project(
     project_id: uuid.UUID,
     data: CreatePublishJobRequest,
@@ -195,6 +197,33 @@ async def publish_project(
         "project": ReelProjectResponse.model_validate(project),
         "version": ReelVersionResponse.model_validate(version),
     }
+
+@router.post("/{project_id}/schedule", response_model=CreatePublishJobResponse)
+async def schedule_project_publish(
+    project_id: uuid.UUID,
+    data: SchedulePublishJobRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Schedule a publish job for a future time."""
+    from app.services.publish_service import schedule_publish_job
+    publish_job, project, version = await schedule_publish_job(db, current_user.id, project_id, data)
+    return {
+        "publish_job": PublishJobResponse.model_validate(publish_job),
+        "project": ReelProjectResponse.model_validate(project),
+        "version": ReelVersionResponse.model_validate(version),
+    }
+
+@router.delete("/publish-jobs/{publish_job_id}/schedule", response_model=PublishJobResponse)
+async def cancel_scheduled_publish(
+    publish_job_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Cancel a scheduled publish job."""
+    from app.services.publish_service import cancel_scheduled_publish_job
+    job = await cancel_scheduled_publish_job(db, current_user.id, publish_job_id)
+    return PublishJobResponse.model_validate(job)
 
 
 @router.get("/{project_id}/publish-jobs", response_model=list[PublishJobResponse])

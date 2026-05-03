@@ -195,6 +195,15 @@ export interface CreatePublishJobResponse {
   version: ReelVersion;
 }
 
+export interface SchedulePublishJobRequest {
+  social_account_id: string;
+  caption?: string;
+  share_to_feed?: boolean;
+  allow_comments?: boolean;
+  scheduled_at: string;
+  schedule_timezone?: string;
+}
+
 export interface StoryboardSceneInput {
   scene_number?: number;
   start_time: number;
@@ -531,16 +540,29 @@ class ApiClient {
 
   async publishReelProject(
     projectId: string,
-    data: {
-      social_account_id: string;
-      caption?: string;
-      share_to_feed?: boolean;
-      allow_comments?: boolean;
-    }
+    data: { social_account_id: string; caption?: string }
   ): Promise<CreatePublishJobResponse> {
     const res = await this.client.post<CreatePublishJobResponse>(
       `/api/v1/reel-projects/${projectId}/publish`,
       data
+    );
+    return res.data;
+  }
+
+  async scheduleReelProject(
+    projectId: string,
+    data: SchedulePublishJobRequest
+  ): Promise<CreatePublishJobResponse> {
+    const res = await this.client.post<CreatePublishJobResponse>(
+      `/api/v1/reel-projects/${projectId}/schedule`,
+      data
+    );
+    return res.data;
+  }
+
+  async cancelScheduledPublishJob(jobId: string): Promise<PublishJob> {
+    const res = await this.client.delete<PublishJob>(
+      `/api/v1/reel-projects/publish-jobs/${jobId}/schedule`
     );
     return res.data;
   }

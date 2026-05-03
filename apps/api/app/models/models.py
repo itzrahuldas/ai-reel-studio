@@ -81,12 +81,14 @@ class JobStatus(str, enum.Enum):
 
 
 class PublishJobStatus(str, enum.Enum):
+    SCHEDULED = "scheduled"
     QUEUED = "queued"
     CONTAINER_CREATED = "container_created"
     POLLING = "polling"
     PUBLISHED = "published"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    RECONNECT_REQUIRED = "reconnect_required"
 
 
 class WorkspacePlan(str, enum.Enum):
@@ -330,10 +332,17 @@ class PublishJob(TimestampMixin, Base):
     ig_container_id: Mapped[str | None] = mapped_column(String(255))
     ig_media_id: Mapped[str | None] = mapped_column(String(255))
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_timezone: Mapped[str | None] = mapped_column(String(50))
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_reason: Mapped[str | None] = mapped_column(String(255))
     error_message: Mapped[str | None] = mapped_column(Text)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    execution_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     project: Mapped["ReelProject"] = relationship(back_populates="publish_jobs")
