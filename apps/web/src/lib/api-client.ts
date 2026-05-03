@@ -68,6 +68,8 @@ export interface ReelVersion {
   video_prompt: string | null;
   estimated_duration: number | null;
   moderation_flags: Record<string, unknown> | null;
+  video_asset_id: string | null;
+  thumbnail_asset_id: string | null;
   status: ReelProjectStatus;
   approved_at: string | null;
   created_at: string;
@@ -100,7 +102,25 @@ export interface MediaAsset {
   mime_type: string | null;
   file_size: number | null;
   status: string;
+  url: string | null;
   created_at: string;
+}
+
+export interface RenderJob {
+  id: string;
+  project_id: string;
+  version_id: string;
+  celery_task_id: string | null;
+  status: "queued" | "running" | "complete" | "failed";
+  renderer: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  command_log: string | null;
+  input_payload: Record<string, unknown> | null;
+  output_payload: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface GenerationJob {
@@ -136,13 +156,21 @@ export interface CreateReelProjectResponse {
 
 export interface SocialAccount {
   id: string;
+  workspace_id: string;
+  connected_by_user_id: string;
   platform: string;
-  platform_username: string | null;
-  platform_user_id: string;
+  username: string | null;
+  account_type: string | null;
+  ig_user_id: string;
+  page_id: string | null;
+  page_name: string | null;
   status: "connected" | "reconnect_required" | "error";
   token_expires_at: string | null;
-  scopes: string[] | null;
+  scopes_json: string[] | null;
+  metadata_json: Record<string, unknown> | null;
   created_at: string;
+  updated_at: string;
+  disconnected_at: string | null;
 }
 
 export interface PublishJob {
@@ -263,6 +291,11 @@ class ApiClient {
     return res.data;
   }
 
+  async getMediaAsset(id: string): Promise<MediaAsset> {
+    const res = await this.client.get<MediaAsset>(`/api/v1/media-assets/${id}`);
+    return res.data;
+  }
+
   // ── Reel Projects ─────────────────────────────────────────────────────────
 
   /**
@@ -319,6 +352,30 @@ class ApiClient {
     return res.data;
   }
 
+  /**
+   * Trigger rendering for the latest version.
+   */
+  async renderReelProject(
+    projectId: string
+  ): Promise<{ render_job: RenderJob; project: ReelProject; version: ReelVersion }> {
+    const res = await this.client.post<{
+      render_job: RenderJob;
+      project: ReelProject;
+      version: ReelVersion;
+    }>(`/api/v1/reel-projects/${projectId}/render`);
+    return res.data;
+  }
+
+  /**
+   * Get all render jobs for a project.
+   */
+  async getRenderJobs(projectId: string): Promise<RenderJob[]> {
+    const res = await this.client.get<RenderJob[]>(
+      `/api/v1/reel-projects/${projectId}/render-jobs`
+    );
+    return res.data;
+  }
+
   // ── Reel Versions ─────────────────────────────────────────────────────────
 
   async updateCaption(versionId: string, caption: string): Promise<void> {
@@ -337,23 +394,45 @@ class ApiClient {
     await this.client.post(`/api/v1/reel-versions/${versionId}/reject`, { reason });
   }
 
-  // ── Social Accounts ───────────────────────────────────────────────────────
+  // ── Instagram Integrations ────────────────────────────────────────────────
 
-  async listSocialAccounts(): Promise<SocialAccount[]> {
-    const res = await this.client.get<SocialAccount[]>("/api/v1/social-accounts");
-    return res.data;
-  }
-
-  async connectInstagram(workspaceId: string): Promise<{ auth_url: string }> {
-    const res = await this.client.post<{ auth_url: string }>(
-      "/api/v1/social-accounts/instagram/connect",
-      { workspace_id: workspaceId }
+  async getInstagramStatus(): Promise<{ connected: boolean; accounts: SocialAccount[] }> {
+    const res = await this.client.get<{ connected: boolean; accounts: SocialAccount[] }>(
+      "/api/v1/integrations/instagram/status"
     );
     return res.data;
   }
 
-  async disconnectSocialAccount(id: string): Promise<void> {
-    await this.client.delete(`/api/v1/social-accounts/${id}`);
+  async startInstagramConnect(): Promise<{ authorization_url: string }> {
+    const res = await this.client.post<{ authorization_url: string }>(
+      "/api/v1/integrations/instagram/connect"
+    );
+    return res.data;
+  }
+
+  async mockInstagramConnect(): Promise<{ status: string }> {
+    const res = await this.client.post<{ status: string }>(
+      "/api/v1/integrations/instagram/mock-connect"
+    );
+    return res.data;
+  }
+
+  async listInstagramAccounts(): Promise<SocialAccount[]> {
+    const res = await this.client.get<SocialAccount[]>(
+      "/api/v1/integrations/instagram/accounts"
+    );
+    return res.data;
+  }
+
+  async disconnectInstagramAccount(id: string): Promise<void> {
+    await this.client.delete(`/api/v1/integrations/instagram/accounts/${id}`);
+  }
+
+  async reconnectInstagramAccount(): Promise<{ authorization_url: string }> {
+    const res = await this.client.post<{ authorization_url: string }>(
+      "/api/v1/integrations/instagram/reconnect"
+    );
+    return res.data;
   }
 
   // ── Publish Jobs ──────────────────────────────────────────────────────────

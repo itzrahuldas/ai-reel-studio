@@ -93,6 +93,7 @@ class MediaAssetResponse(OrmBaseModel):
     mime_type: str | None
     file_size: int | None
     status: str
+    url: str | None = None
     created_at: datetime
 
 
@@ -199,13 +200,21 @@ class PublishJobResponse(OrmBaseModel):
 
 class SocialAccountResponse(OrmBaseModel):
     id: UUID
+    workspace_id: UUID
+    connected_by_user_id: UUID
     platform: str
-    platform_username: str | None
-    platform_user_id: str
+    username: str | None
+    account_type: str | None
+    ig_user_id: str
+    page_id: str | None
+    page_name: str | None
     status: str
     token_expires_at: datetime | None
-    scopes: list[str] | None
+    scopes_json: list[str] | None
+    metadata_json: dict | None
     created_at: datetime
+    updated_at: datetime
+    disconnected_at: datetime | None
 
 
 # ── Generation Jobs ───────────────────────────────────────────────────────────
@@ -222,6 +231,31 @@ class GenerationJobResponse(OrmBaseModel):
     retry_count: int
     created_at: datetime
     updated_at: datetime
+
+
+# ── Render Jobs ───────────────────────────────────────────────────────────────
+
+class RenderJobResponse(OrmBaseModel):
+    id: UUID
+    project_id: UUID
+    version_id: UUID
+    celery_task_id: str | None
+    status: str
+    renderer: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+    command_log: str | None
+    input_payload: dict | None
+    output_payload: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateRenderJobResponse(BaseModel):
+    render_job: RenderJobResponse
+    project: ReelProjectResponse
+    version: ReelVersionResponse
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────

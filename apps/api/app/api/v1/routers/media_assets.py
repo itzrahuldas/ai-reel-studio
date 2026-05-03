@@ -1,19 +1,25 @@
 """
 Media Assets API router.
-Handles local file upload for development.
+Handles local file upload and serving for development.
 In production, swap STORAGE_PROVIDER=s3 and use pre-signed S3 URLs.
 
 Storage strategy:
   - STORAGE_PROVIDER=local : files saved under LOCAL_STORAGE_PATH/uploads/
   - STORAGE_PROVIDER=s3    : TODO — return a pre-signed PUT URL for direct browser upload
+
+URL strategy:
+  - All media URLs go through /api/v1/media-assets/{id}/view
+  - Raw filesystem paths are NEVER exposed in responses.
 """
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
@@ -25,13 +31,14 @@ from app.models.models import (
     WorkspaceMember,
 )
 from app.schemas.schemas import MediaAssetResponse
+from app.services.render_service import build_media_url, get_local_storage_path
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
-UPLOAD_DIR = os.path.join(settings.LOCAL_STORAGE_PATH, "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = Path(settings.LOCAL_STORAGE_PATH) / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def _resolve_workspace(db: DbSession, user_id: uuid.UUID) -> uuid.UUID:
@@ -42,6 +49,8 @@ async def _resolve_workspace(db: DbSession, user_id: uuid.UUID) -> uuid.UUID:
         raise HTTPException(status_code=400, detail="User has no workspace")
     return ws_id
 
+
+# ── Upload ────────────────────────────────────────────────────────────────────
 
 @router.post("/upload", response_model=MediaAssetResponse, status_code=201)
 async def upload_media_asset(
@@ -58,21 +67,16 @@ async def upload_media_asset(
 
     Returns:
     - MediaAsset record with id — use this as `source_image_id` when creating a reel project.
-
-    NOTE: In production with STORAGE_PROVIDER=s3, this endpoint should return a
-    pre-signed PUT URL so the browser uploads directly to S3, avoiding memory
-    overhead on the API. The local storage adapter here is for development only.
+    - `url` field contains a safe API URL (no raw filesystem paths).
     """
     # ── Validate MIME type ────────────────────────────────────────────────────
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{file.content_type}'. "
-                   f"Allowed: jpeg, png, webp.",
+            detail=f"Unsupported file type '{file.content_type}'. Allowed: jpeg, png, webp.",
         )
 
     # ── Validate file size ────────────────────────────────────────────────────
-    # Read entire file into memory to check size (acceptable for ≤20 MB images)
     file_bytes = await file.read()
     file_size = len(file_bytes)
     if file_size > settings.MAX_UPLOAD_BYTES:
@@ -90,30 +94,30 @@ async def upload_media_asset(
     ext = os.path.splitext(file.filename or "image")[1].lower() or ".jpg"
     asset_id = uuid.uuid4()
     storage_filename = f"{asset_id}{ext}"
-    file_path = os.path.join(UPLOAD_DIR, storage_filename)
+    file_path = UPLOAD_DIR / storage_filename
 
     try:
-        with open(file_path, "wb") as buffer:
-            buffer.write(file_bytes)
+        file_path.write_bytes(file_bytes)
     except OSError as e:
-        logger.error("file_write_failed", path=file_path, error=str(e))
+        logger.error("file_write_failed", path=str(file_path), error=str(e))
         raise HTTPException(status_code=500, detail="File upload failed — storage error.")
 
     # ── Create MediaAsset record ──────────────────────────────────────────────
-    # s3_key stores the relative path; s3_bucket stores the provider name
+    # s3_key stores the relative path; s3_bucket="local" is sentinel for local storage.
+    # NEVER store the raw filesystem path in public fields.
     asset = MediaAsset(
         id=asset_id,
         workspace_id=workspace_id,
         asset_type=MediaAssetType.SOURCE_IMAGE,
         s3_key=f"uploads/{storage_filename}",
-        s3_bucket="local",  # Sentinel value for local storage
+        s3_bucket="local",
         filename=file.filename,
         mime_type=file.content_type,
         file_size=file_size,
         status=MediaAssetStatus.READY,
         metadata_={
             "storage_provider": "local",
-            "storage_path": file_path,
+            "original_filename": file.filename,
             "uploaded_by": str(current_user.id),
         },
     )
@@ -128,4 +132,72 @@ async def upload_media_asset(
         size_bytes=file_size,
         workspace_id=str(workspace_id),
     )
-    return asset
+    return _enrich_asset_response(asset)
+
+
+# ── Get asset metadata ────────────────────────────────────────────────────────
+
+@router.get("/{asset_id}", response_model=MediaAssetResponse)
+async def get_media_asset(
+    asset_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Return safe metadata and dev-accessible URL for a media asset."""
+    from app.services.render_service import get_media_asset_for_user
+    asset = await get_media_asset_for_user(db, current_user.id, asset_id)
+    return _enrich_asset_response(asset)
+
+
+# ── View / stream asset ───────────────────────────────────────────────────────
+
+@router.get("/{asset_id}/view")
+async def view_media_asset(
+    asset_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """
+    Stream the media asset file for inline preview.
+    Only works in local storage mode. In production, redirect to CDN/S3 URL.
+
+    Never exposes raw filesystem paths in the response.
+    Auth required — user must be workspace member.
+    """
+    from app.services.render_service import get_media_asset_for_user
+    asset = await get_media_asset_for_user(db, current_user.id, asset_id)
+
+    local_path = get_local_storage_path(asset)
+    if not local_path or not local_path.exists():
+        raise HTTPException(status_code=404, detail="Asset file not found on storage")
+
+    media_type = asset.mime_type or "application/octet-stream"
+    filename = asset.filename or local_path.name
+
+    return FileResponse(
+        path=str(local_path),
+        media_type=media_type,
+        filename=filename,
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+# ── Helper ────────────────────────────────────────────────────────────────────
+
+def _enrich_asset_response(asset: MediaAsset) -> dict:
+    """Build a safe response dict with url field (no raw FS paths)."""
+    return {
+        "id": str(asset.id),
+        "workspace_id": str(asset.workspace_id),
+        "asset_type": asset.asset_type.value,
+        "s3_key": asset.s3_key,
+        "filename": asset.filename,
+        "mime_type": asset.mime_type,
+        "file_size": asset.file_size,
+        "status": asset.status.value,
+        "url": build_media_url(asset),
+        "created_at": asset.created_at.isoformat() if asset.created_at else None,
+    }

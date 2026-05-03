@@ -35,7 +35,9 @@ class ReelProjectStatus(str, enum.Enum):
     VIDEO_GENERATING = "video_generating"
     AUDIO_GENERATING = "audio_generating"
     RENDERING = "rendering"
+    RENDERED = "rendered"
     READY_FOR_REVIEW = "ready_for_review"
+    READY_TO_PUBLISH = "ready_to_publish"
     APPROVED = "approved"
     PUBLISHING = "publishing"
     IG_PROCESSING = "ig_processing"
@@ -173,17 +175,21 @@ class SocialAccount(TimestampMixin, Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    connected_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     platform: Mapped[str] = mapped_column(String(50), nullable=False, default="instagram")
-    platform_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    platform_username: Mapped[str | None] = mapped_column(String(255))
-    platform_page_id: Mapped[str | None] = mapped_column(String(255))
-    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
-    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[SocialAccountStatus] = mapped_column(
         Enum(SocialAccountStatus), default=SocialAccountStatus.CONNECTED, nullable=False
     )
-    scopes: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+    username: Mapped[str | None] = mapped_column(String(255))
+    account_type: Mapped[str | None] = mapped_column(String(50))
+    ig_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    page_id: Mapped[str | None] = mapped_column(String(255))
+    page_name: Mapped[str | None] = mapped_column(String(255))
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scopes_json: Mapped[list[str] | None] = mapped_column(JSONB)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     workspace: Mapped["Workspace"] = relationship(back_populates="social_accounts")
@@ -293,6 +299,7 @@ class RenderJob(TimestampMixin, Base):
     __tablename__ = "render_jobs"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"), nullable=False, index=True)
     version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"), nullable=False)
     celery_task_id: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.QUEUED, nullable=False)
@@ -301,9 +308,12 @@ class RenderJob(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     command_log: Mapped[str | None] = mapped_column(Text)
+    input_payload: Mapped[dict | None] = mapped_column(JSONB)
+    output_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     # Relationships
     version: Mapped["ReelVersion"] = relationship(back_populates="render_jobs")
+
 
 
 class PublishJob(TimestampMixin, Base):

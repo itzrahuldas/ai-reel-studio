@@ -114,6 +114,19 @@ def _make_job():
     return j
 
 
+def _make_render_job():
+    from app.models.models import RenderJob
+    j = MagicMock(spec=RenderJob)
+    j.id = str(uuid4())
+    j.project_id = FAKE_PROJECT_ID
+    j.version_id = FAKE_VERSION_ID
+    j.status = JobStatus.QUEUED
+    j.renderer = "ffmpeg"
+    j.created_at = "2026-05-03T10:00:00Z"
+    j.updated_at = "2026-05-03T10:00:00Z"
+    return j
+
+
 # ── Media Asset Upload Tests ──────────────────────────────────────────────────
 
 @patch("app.api.deps.decode_token")
@@ -284,6 +297,48 @@ def test_get_project_jobs(mock_jobs, mock_decode):
     data = response.json()
     assert len(data) == 1
     assert data[0]["job_type"] == "mock_generation"
+
+
+# ── Render Pipeline Tests ─────────────────────────────────────────────────────
+
+@patch("app.api.deps.decode_token")
+@patch("app.api.v1.routers.reel_projects.create_render_job", new_callable=AsyncMock)
+def test_render_project_success(mock_render, mock_decode):
+    """Render endpoint creates a render job and returns it."""
+    mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
+    mock_render.return_value = (_make_render_job(), _make_project(), _make_version())
+
+    response = client.post(
+        f"/api/v1/reel-projects/{FAKE_PROJECT_ID}/render",
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert "render_job" in data
+    assert "project" in data
+    assert "version" in data
+
+
+def test_render_project_unauthenticated():
+    response = client.post(f"/api/v1/reel-projects/{FAKE_PROJECT_ID}/render")
+    assert response.status_code == 401
+
+
+@patch("app.api.deps.decode_token")
+@patch("app.api.v1.routers.reel_projects.get_render_jobs", new_callable=AsyncMock)
+def test_get_render_jobs(mock_get_jobs, mock_decode):
+    """Render jobs endpoint returns list of render jobs."""
+    mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
+    mock_get_jobs.return_value = [_make_render_job()]
+
+    response = client.get(
+        f"/api/v1/reel-projects/{FAKE_PROJECT_ID}/render-jobs",
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["renderer"] == "ffmpeg"
 
 
 # ── Sync Pipeline Tests ───────────────────────────────────────────────────────

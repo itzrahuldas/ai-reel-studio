@@ -120,10 +120,12 @@ class InstagramOAuth:
 
             ig_account_id = None
             page_id = None
+            page_name = None
             for page in pages_data.get("data", []):
                 if "instagram_business_account" in page:
                     ig_account_id = page["instagram_business_account"]["id"]
                     page_id = page["id"]
+                    page_name = page.get("name")
                     break
 
             if not ig_account_id:
@@ -133,13 +135,14 @@ class InstagramOAuth:
                     "linked to a Facebook Page."
                 )
 
-            # 5. Fetch IG username
+            # 5. Fetch IG username and account_type
             ig_resp = await client.get(
                 f"{self.GRAPH_URL}/{self.api_version}/{ig_account_id}",
-                params={"access_token": long_token, "fields": "id,username"},
+                params={"access_token": long_token, "fields": "id,username,account_type"},
             )
             ig_data = ig_resp.json()
             ig_username = ig_data.get("username", "")
+            account_type = ig_data.get("account_type", "BUSINESS")
 
         logger.info(
             "instagram.oauth.success",
@@ -147,15 +150,18 @@ class InstagramOAuth:
             user_id=user_id,
             ig_user_id=ig_account_id,
             ig_username=ig_username,
+            account_type=account_type,
             # NOTE: access_token intentionally NOT logged
         )
 
         return {
             "workspace_id": workspace_id,
             "user_id": user_id,
-            "platform_user_id": ig_account_id,
-            "platform_username": ig_username,
-            "platform_page_id": page_id,
+            "ig_user_id": ig_account_id,
+            "username": ig_username,
+            "account_type": account_type,
+            "page_id": page_id,
+            "page_name": page_name,
             "access_token": long_token,  # Caller must encrypt before storing
             "expires_in_seconds": expires_in,
             "scopes": IG_REQUIRED_SCOPES,

@@ -9,6 +9,7 @@ from uuid import UUID
 import structlog
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from cryptography.fernet import Fernet
 
 from app.core.config import settings
 
@@ -84,3 +85,42 @@ def validate_oauth_state_token(state: str) -> dict[str, Any]:
     if payload.get("type") != "oauth_state":
         raise JWTError("Invalid state token type")
     return payload
+
+
+# ── Token Encryption ──────────────────────────────────────────────────────────
+
+def _get_fernet() -> Fernet:
+    """Initialize Fernet with TOKEN_ENCRYPTION_KEY."""
+    if not settings.TOKEN_ENCRYPTION_KEY:
+        raise RuntimeError("TOKEN_ENCRYPTION_KEY is not set.")
+    # Fernet requires a 32-byte url-safe base64-encoded key
+    # If the key provided is just 32 characters or not base64 encoded, 
+    # we can pad/encode it, but let's assume it's correctly formatted 
+    # or we can derive a safe key from it.
+    import base64
+    key = settings.TOKEN_ENCRYPTION_KEY.encode('utf-8')
+    if len(key) < 32:
+        key = key.ljust(32, b'0')
+    if len(key) > 32 and len(key) != 44:
+        key = key[:32]
+    
+    # Ensure it's urlsafe_b64encoded if it isn't already
+    try:
+        Fernet(key)
+        final_key = key
+    except (ValueError, TypeError):
+        final_key = base64.urlsafe_b64encode(key[:32])
+        
+    return Fernet(final_key)
+
+
+def encrypt_token(token: str) -> str:
+    """Encrypt a raw token before storing in database."""
+    f = _get_fernet()
+    return f.encrypt(token.encode('utf-8')).decode('utf-8')
+
+
+def decrypt_token(encrypted_token: str) -> str:
+    """Decrypt a token retrieved from the database."""
+    f = _get_fernet()
+    return f.decrypt(encrypted_token.encode('utf-8')).decode('utf-8')

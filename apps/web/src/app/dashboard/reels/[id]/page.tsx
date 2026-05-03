@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import type { ReelProject, ReelVersion, GenerationJob } from "@/lib/api-client";
+import type { ReelProject, ReelVersion, GenerationJob, RenderJob } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -65,6 +65,53 @@ function GenerationTimeline({ jobs }: { jobs: GenerationJob[] }) {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-300 font-medium">
                   {job.job_type.replace(/_/g, " ")}
+                </span>
+                <StatusBadge status={job.status} />
+              </div>
+              {job.started_at && (
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Started: {new Date(job.started_at).toLocaleTimeString()}
+                </p>
+              )}
+              {job.completed_at && (
+                <p className="text-xs text-gray-600">
+                  Done: {new Date(job.completed_at).toLocaleTimeString()}
+                </p>
+              )}
+              {job.error_message && (
+                <p className="text-xs text-red-400 mt-1">{job.error_message}</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function RenderTimeline({ jobs }: { jobs: RenderJob[] }) {
+  if (!jobs.length) return null;
+  return (
+    <SectionCard title="Render Timeline">
+      <div className="space-y-3">
+        {jobs.map((job) => (
+          <div key={job.id} className="flex items-start gap-3">
+            <div
+              className={
+                "mt-1 w-2 h-2 rounded-full flex-shrink-0 " +
+                (job.status === "complete"
+                  ? "bg-green-500"
+                  : job.status === "failed"
+                  ? "bg-red-500"
+                  : job.status === "running"
+                  ? "bg-blue-400 animate-pulse"
+                  : "bg-gray-600")
+              }
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-300 font-medium">
+                  {job.renderer} Render
                 </span>
                 <StatusBadge status={job.status} />
               </div>
@@ -205,6 +252,36 @@ export default function ReelDetailPage() {
     },
   });
 
+  const { data: renderJobs } = useQuery<RenderJob[]>({
+    queryKey: ["reel-project-render-jobs", id],
+    queryFn: () => apiClient.getRenderJobs(id),
+    refetchInterval: () =>
+      project && project.status === "rendering" ? 3000 : false,
+    enabled: !!id,
+  });
+
+  const version = project?.latest_version;
+
+  const { data: videoAsset } = useQuery({
+    queryKey: ["media-asset", version?.video_asset_id],
+    queryFn: () => apiClient.getMediaAsset(version!.video_asset_id!),
+    enabled: !!version?.video_asset_id,
+  });
+
+  const { data: thumbnailAsset } = useQuery({
+    queryKey: ["media-asset", version?.thumbnail_asset_id],
+    queryFn: () => apiClient.getMediaAsset(version!.thumbnail_asset_id!),
+    enabled: !!version?.thumbnail_asset_id,
+  });
+
+  const renderMutation = useMutation({
+    mutationFn: () => apiClient.renderReelProject(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
+      queryClient.invalidateQueries({ queryKey: ["reel-project-render-jobs", id] });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="p-8 max-w-4xl mx-auto">
@@ -232,8 +309,9 @@ export default function ReelDetailPage() {
     );
   }
 
-  const version = project.latest_version;
   const isGenerating = GENERATING_STATUSES.has(project.status);
+  const isRendering = project.status === "rendering";
+  const canRender = project.status === "ready_for_review" || project.status === "failed_render";
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -253,14 +331,26 @@ export default function ReelDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-3 flex-shrink-0">
           <StatusBadge status={project.status} />
-          <button
-            id="regenerate-btn"
-            onClick={() => regenerateMutation.mutate()}
-            disabled={regenerateMutation.isPending || isGenerating}
-            className="btn-secondary text-sm disabled:opacity-50"
-          >
-            {regenerateMutation.isPending ? "Regenerating..." : "Regenerate"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              id="regenerate-btn"
+              onClick={() => regenerateMutation.mutate()}
+              disabled={regenerateMutation.isPending || isGenerating || isRendering}
+              className="btn-secondary text-sm disabled:opacity-50"
+            >
+              {regenerateMutation.isPending ? "Regenerating..." : "Regenerate"}
+            </button>
+            {canRender && (
+              <button
+                id="render-btn"
+                onClick={() => renderMutation.mutate()}
+                disabled={renderMutation.isPending || isRendering}
+                className="btn-primary text-sm disabled:opacity-50"
+              >
+                {renderMutation.isPending ? "Starting Render..." : "Render Video"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -276,6 +366,21 @@ export default function ReelDetailPage() {
       {project.status === "failed_script" && (
         <div className="mb-6 p-4 rounded-xl bg-red-950/50 border border-red-800/50 text-red-300 text-sm">
           Generation failed. Click Regenerate to try again.
+        </div>
+      )}
+
+      {isRendering && (
+        <div
+          id="rendering-banner"
+          className="mb-6 p-4 rounded-xl bg-purple-950/50 border border-purple-800/50 text-purple-300 text-sm flex items-center gap-3"
+        >
+          <span>Rendering your final video... This may take a few minutes.</span>
+        </div>
+      )}
+
+      {project.status === "failed_render" && (
+        <div className="mb-6 p-4 rounded-xl bg-red-950/50 border border-red-800/50 text-red-300 text-sm">
+          Rendering failed. Click Render Video to try again.
         </div>
       )}
 
@@ -307,21 +412,34 @@ export default function ReelDetailPage() {
           )}
 
           {jobs && jobs.length > 0 && <GenerationTimeline jobs={jobs} />}
+          {renderJobs && renderJobs.length > 0 && <RenderTimeline jobs={renderJobs} />}
         </div>
 
         <div className="space-y-4">
           <SectionCard title="Video Preview">
-            <div className="aspect-[9/16] max-h-80 flex flex-col items-center justify-center bg-gray-900 rounded-xl border-2 border-dashed border-gray-700">
+            <div className="aspect-[9/16] max-h-80 flex flex-col items-center justify-center bg-gray-900 rounded-xl border-2 border-dashed border-gray-700 overflow-hidden relative">
               {isGenerating ? (
                 <div className="text-center">
                   <div className="text-4xl mb-2 animate-pulse">🎬</div>
                   <p className="text-gray-400 text-sm">Generating...</p>
                 </div>
+              ) : isRendering ? (
+                <div className="text-center">
+                  <div className="text-4xl mb-2 animate-pulse">🚀</div>
+                  <p className="text-gray-400 text-sm">Rendering Video...</p>
+                </div>
+              ) : videoAsset?.url ? (
+                <video
+                  src={videoAsset.url}
+                  controls
+                  className="w-full h-full object-cover"
+                  poster={thumbnailAsset?.url ?? undefined}
+                />
               ) : (
                 <div className="text-center">
                   <div className="text-4xl mb-2">🎬</div>
                   <p className="text-gray-500 text-sm">Video preview placeholder</p>
-                  <p className="text-gray-600 text-xs mt-1">Video rendering coming in next feature</p>
+                  <p className="text-gray-600 text-xs mt-1">Render the video to see the output</p>
                 </div>
               )}
             </div>

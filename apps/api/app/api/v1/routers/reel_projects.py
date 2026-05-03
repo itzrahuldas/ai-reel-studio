@@ -13,9 +13,11 @@ from app.api.deps import CurrentUser, DbSession
 from app.schemas.schemas import (
     CreateReelProjectRequest,
     CreateReelProjectResponse,
+    CreateRenderJobResponse,
     GenerationJobResponse,
     ReelProjectResponse,
     ReelVersionResponse,
+    RenderJobResponse,
 )
 from app.services.reel_project import (
     create_reel_project,
@@ -24,6 +26,7 @@ from app.services.reel_project import (
     get_projects,
     regenerate_reel_project,
 )
+from app.services.render_service import create_render_job, get_render_jobs
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -106,3 +109,29 @@ async def get_jobs(
     """Return generation timeline / jobs for the project."""
     jobs = await get_project_jobs(db, current_user.id, project_id)
     return [GenerationJobResponse.model_validate(j) for j in jobs]
+
+
+@router.post("/{project_id}/render", status_code=201, response_model=CreateRenderJobResponse)
+async def render_project(
+    project_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Create a render job for the latest version and enqueue FFmpeg render task."""
+    render_job, project, version = await create_render_job(db, current_user.id, project_id)
+    return {
+        "render_job": RenderJobResponse.model_validate(render_job),
+        "project": ReelProjectResponse.model_validate(project),
+        "version": ReelVersionResponse.model_validate(version),
+    }
+
+
+@router.get("/{project_id}/render-jobs", response_model=list[RenderJobResponse])
+async def list_render_jobs(
+    project_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Return render jobs for a project."""
+    jobs = await get_render_jobs(db, current_user.id, project_id)
+    return [RenderJobResponse.model_validate(j) for j in jobs]
