@@ -182,10 +182,17 @@ export interface PublishJob {
   ig_container_id: string | null;
   ig_media_id: string | null;
   scheduled_for: string | null;
+  started_at: string | null;
   published_at: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CreatePublishJobResponse {
+  publish_job: PublishJob;
+  project: ReelProject;
+  version: ReelVersion;
 }
 
 export interface User {
@@ -437,17 +444,33 @@ class ApiClient {
 
   // ── Publish Jobs ──────────────────────────────────────────────────────────
 
-  async createPublishJob(data: {
-    project_id: string;
-    social_account_id: string;
-    schedule_time?: string;
-  }): Promise<PublishJob> {
-    const res = await this.client.post<PublishJob>("/api/v1/publish-jobs", data);
+  async publishReelProject(
+    projectId: string,
+    data: {
+      social_account_id: string;
+      caption?: string;
+      share_to_feed?: boolean;
+      allow_comments?: boolean;
+    }
+  ): Promise<CreatePublishJobResponse> {
+    const res = await this.client.post<CreatePublishJobResponse>(
+      `/api/v1/reel-projects/${projectId}/publish`,
+      data
+    );
     return res.data;
   }
 
-  async getPublishJob(id: string): Promise<PublishJob> {
-    const res = await this.client.get<PublishJob>(`/api/v1/publish-jobs/${id}`);
+  async getPublishJobs(projectId: string): Promise<PublishJob[]> {
+    const res = await this.client.get<PublishJob[]>(
+      `/api/v1/reel-projects/${projectId}/publish-jobs`
+    );
+    return res.data;
+  }
+
+  async retryPublishJob(jobId: string): Promise<PublishJob> {
+    const res = await this.client.post<PublishJob>(
+      `/api/v1/reel-projects/publish-jobs/${jobId}/retry`
+    );
     return res.data;
   }
 }

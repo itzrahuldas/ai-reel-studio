@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import type { ReelProject, ReelVersion, GenerationJob, RenderJob } from "@/lib/api-client";
+import type { ReelProject, ReelVersion, GenerationJob, RenderJob, PublishJob } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -260,6 +260,19 @@ export default function ReelDetailPage() {
     enabled: !!id,
   });
 
+  const { data: publishJobs } = useQuery<PublishJob[]>({
+    queryKey: ["reel-project-publish-jobs", id],
+    queryFn: () => apiClient.getPublishJobs(id),
+    refetchInterval: () =>
+      project && (project.status === "publishing" || project.status === "ig_processing") ? 3000 : false,
+    enabled: !!id,
+  });
+
+  const { data: instagramStatus } = useQuery({
+    queryKey: ["instagram-status"],
+    queryFn: () => apiClient.getInstagramStatus(),
+  });
+
   const version = project?.latest_version;
 
   const { data: videoAsset } = useQuery({
@@ -279,6 +292,22 @@ export default function ReelDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
       queryClient.invalidateQueries({ queryKey: ["reel-project-render-jobs", id] });
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: (social_account_id: string) => apiClient.publishReelProject(id, { social_account_id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
+      queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
+    },
+  });
+
+  const retryPublishMutation = useMutation({
+    mutationFn: (jobId: string) => apiClient.retryPublishJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
+      queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
     },
   });
 
@@ -443,6 +472,79 @@ export default function ReelDetailPage() {
                 </div>
               )}
             </div>
+          </SectionCard>
+
+          {/* Publishing Section */}
+          <SectionCard title="Instagram Publishing">
+            {!instagramStatus?.connected || instagramStatus.accounts.length === 0 ? (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-400 mb-4">You need to connect an Instagram account to publish.</p>
+                <Link href="/dashboard/integrations" className="btn-secondary text-sm">
+                  Connect Instagram
+                </Link>
+              </div>
+            ) : !videoAsset?.url ? (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-500">Render video before publishing.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {instagramStatus.accounts.map((acc) => (
+                  <div key={acc.id} className="flex items-center justify-between p-3 bg-gray-800/60 rounded-lg border border-gray-700">
+                    <div>
+                      <p className="text-sm font-medium text-white">@{acc.username}</p>
+                      {acc.status === "reconnect_required" && (
+                        <p className="text-xs text-red-400">Reconnect required</p>
+                      )}
+                    </div>
+                    {acc.status === "reconnect_required" ? (
+                      <Link href="/dashboard/integrations" className="btn-secondary text-xs px-2 py-1 text-red-400 border-red-500/30">
+                        Fix Connection
+                      </Link>
+                    ) : (
+                      <button
+                        className="btn-primary text-xs px-3 py-1.5"
+                        onClick={() => publishMutation.mutate(acc.id)}
+                        disabled={publishMutation.isPending || project.status === "publishing" || project.status === "ig_processing" || project.status === "published"}
+                      >
+                        {publishMutation.isPending ? "Starting..." : project.status === "published" ? "Published" : "Publish to Feed"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {publishJobs && publishJobs.length > 0 && (
+                  <div className="mt-4 border-t border-gray-800 pt-4 space-y-3">
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase">Publish History</h3>
+                    {publishJobs.map((job) => (
+                      <div key={job.id} className="text-xs p-3 bg-gray-900/50 rounded border border-gray-800">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-gray-400">{new Date(job.created_at).toLocaleString()}</span>
+                          <span className={`font-medium ${job.status === 'published' ? 'text-green-400' : job.status === 'failed' ? 'text-red-400' : 'text-yellow-400'}`}>
+                            {job.status.toUpperCase()}
+                          </span>
+                        </div>
+                        {job.error_message && (
+                          <p className="text-red-400 mt-1">{job.error_message}</p>
+                        )}
+                        {job.ig_media_id && (
+                          <p className="text-green-400 mt-1 break-all">Media ID: {job.ig_media_id}</p>
+                        )}
+                        {job.status === 'failed' && (
+                          <button
+                            onClick={() => retryPublishMutation.mutate(job.id)}
+                            disabled={retryPublishMutation.isPending}
+                            className="mt-2 text-blue-400 hover:text-blue-300 underline"
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </SectionCard>
 
           <div className="card">

@@ -258,6 +258,39 @@ class CreateRenderJobResponse(BaseModel):
     version: ReelVersionResponse
 
 
+# ── Publish Jobs ──────────────────────────────────────────────────────────────
+
+class PublishJobResponse(OrmBaseModel):
+    id: UUID
+    project_id: UUID
+    version_id: UUID
+    social_account_id: UUID
+    celery_task_id: str | None
+    status: str
+    ig_container_id: str | None
+    ig_media_id: str | None
+    scheduled_for: datetime | None
+    started_at: datetime | None
+    published_at: datetime | None
+    error_message: str | None
+    retry_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreatePublishJobRequest(BaseModel):
+    social_account_id: UUID
+    caption: str | None = None
+    share_to_feed: bool = True
+    allow_comments: bool = True
+
+
+class CreatePublishJobResponse(BaseModel):
+    publish_job: PublishJobResponse
+    project: ReelProjectResponse
+    version: ReelVersionResponse
+
+
 # ── Errors ────────────────────────────────────────────────────────────────────
 
 class ErrorDetail(BaseModel):
