@@ -76,8 +76,13 @@ class Settings(BaseSettings):
     # ── Meta / Instagram ───────────────────────────────────────────────────
     META_APP_ID: str | None = None
     META_APP_SECRET: str | None = None
-    META_REDIRECT_URI: str = "http://localhost:8000/api/v1/social-accounts/instagram/callback"
+    META_REDIRECT_URI: str = "http://localhost:8000/api/v1/integrations/instagram/callback"
     META_GRAPH_API_VERSION: str = "v21.0"
+    INSTAGRAM_INTEGRATION_MODE: Literal["live", "mock"] = "mock"
+
+    # ── Public URLs ────────────────────────────────────────────────────────
+    API_PUBLIC_BASE_URL: str = "http://localhost:8000"
+    STORAGE_PUBLIC_BASE_URL: str | None = None
 
     # ── Celery ─────────────────────────────────────────────────────────────
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
@@ -87,6 +92,8 @@ class Settings(BaseSettings):
     # 'async' = enqueue Celery task (requires Redis + worker running)
     # 'sync'  = run mock pipeline inline in API (no Redis needed for dev)
     GENERATION_MODE: str = "async"
+    RENDER_MODE: str = "async"
+    PUBLISH_MODE: str = "async"
 
     # ── File Upload ────────────────────────────────────────────────────────
     MAX_UPLOAD_BYTES: int = 20 * 1024 * 1024  # 20 MB default

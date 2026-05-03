@@ -11,14 +11,18 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.schemas import (
+    CreatePublishJobRequest,
+    CreatePublishJobResponse,
     CreateReelProjectRequest,
     CreateReelProjectResponse,
     CreateRenderJobResponse,
     GenerationJobResponse,
+    PublishJobResponse,
     ReelProjectResponse,
     ReelVersionResponse,
     RenderJobResponse,
 )
+from app.services.publish_service import create_publish_job, get_publish_jobs, retry_publish_job
 from app.services.reel_project import (
     create_reel_project,
     get_project_jobs,
@@ -135,3 +139,41 @@ async def list_render_jobs(
     """Return render jobs for a project."""
     jobs = await get_render_jobs(db, current_user.id, project_id)
     return [RenderJobResponse.model_validate(j) for j in jobs]
+
+
+@router.post("/{project_id}/publish", status_code=201, response_model=CreatePublishJobResponse)
+async def publish_project(
+    project_id: uuid.UUID,
+    data: CreatePublishJobRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Create a publish job for the latest version and enqueue publish task."""
+    publish_job, project, version = await create_publish_job(db, current_user.id, project_id, data)
+    return {
+        "publish_job": PublishJobResponse.model_validate(publish_job),
+        "project": ReelProjectResponse.model_validate(project),
+        "version": ReelVersionResponse.model_validate(version),
+    }
+
+
+@router.get("/{project_id}/publish-jobs", response_model=list[PublishJobResponse])
+async def list_publish_jobs(
+    project_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Return publish jobs for a project."""
+    jobs = await get_publish_jobs(db, current_user.id, project_id)
+    return [PublishJobResponse.model_validate(j) for j in jobs]
+
+
+@router.post("/publish-jobs/{publish_job_id}/retry", response_model=PublishJobResponse)
+async def retry_publish(
+    publish_job_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> Any:
+    """Retry a failed publish job."""
+    job = await retry_publish_job(db, current_user.id, publish_job_id)
+    return PublishJobResponse.model_validate(job)
