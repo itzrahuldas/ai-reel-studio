@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 from fastapi import HTTPException
 
-from app.models.models import User, Workspace, WorkspaceMember, AuditLog, ActionType
+from app.models.models import User, Workspace, WorkspaceMember, AuditLog
 from app.schemas.schemas import UserCreate, AuthResponse, UserResponse, WorkspaceResponse
 from app.core.security import hash_password, verify_password, create_access_token
 
@@ -30,14 +30,13 @@ async def create_default_workspace(db: AsyncSession, user: User) -> Workspace:
     )
     db.add(member)
     
-    # Audit log for workspace creation
     audit = AuditLog(
-        action=ActionType.SYSTEM_EVENT,
+        action="workspace_created",
         workspace_id=workspace.id,
-        actor_id=user.id,
-        entity_type="workspace",
-        entity_id=workspace.id,
-        details={"event": "workspace_created", "plan": "free"}
+        user_id=user.id,
+        resource_type="workspace",
+        resource_id=workspace.id,
+        metadata_={"plan": "free"}
     )
     db.add(audit)
     return workspace
@@ -52,7 +51,7 @@ async def register_user(db: AsyncSession, user_in: UserCreate) -> AuthResponse:
 
     user = User(
         email=user_in.email.lower(),
-        password_hash=hash_password(user_in.password),
+        hashed_password=hash_password(user_in.password),
         full_name=user_in.full_name,
         is_active=True,
         is_verified=False
@@ -64,12 +63,12 @@ async def register_user(db: AsyncSession, user_in: UserCreate) -> AuthResponse:
     
     # Audit log
     audit = AuditLog(
-        action=ActionType.SYSTEM_EVENT,
+        action="user_registered",
         workspace_id=workspace.id,
-        actor_id=user.id,
-        entity_type="user",
-        entity_id=user.id,
-        details={"event": "user_registered"}
+        user_id=user.id,
+        resource_type="user",
+        resource_id=user.id,
+        metadata_={}
     )
     db.add(audit)
     await db.commit()
@@ -90,6 +89,6 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     user = result.scalars().first()
     if not user:
         return None
-    if not verify_password(password, user.password_hash):
+    if not verify_password(password, user.hashed_password):
         return None
     return user

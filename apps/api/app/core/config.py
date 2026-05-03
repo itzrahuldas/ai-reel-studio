@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
+    # ── Generation Mode ────────────────────────────────────────────────────
+    # 'async' = enqueue Celery task (requires Redis + worker running)
+    # 'sync'  = run mock pipeline inline in API (no Redis needed for dev)
+    GENERATION_MODE: str = "async"
+
+    # ── File Upload ────────────────────────────────────────────────────────
+    MAX_UPLOAD_BYTES: int = 20 * 1024 * 1024  # 20 MB default
+
     # ── Rate Limiting ──────────────────────────────────────────────────────
     RATE_LIMIT_GENERATION_PER_HOUR: int = 10
     RATE_LIMIT_PUBLISH_PER_DAY: int = 25

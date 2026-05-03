@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
+import type { ApiError } from "@/lib/api-client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,8 +20,8 @@ export default function LoginPage() {
       const data = await apiClient.login(email, password);
       localStorage.setItem("access_token", data.access_token);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Failed to log in.");
+    } catch (err: unknown) {
+      setError((err as ApiError)?.message ?? "Failed to log in.");
     } finally {
       setIsLoading(false);
     }

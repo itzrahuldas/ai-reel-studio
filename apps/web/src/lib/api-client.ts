@@ -1,35 +1,23 @@
 /**
  * Typed API client for AI Reel Studio backend.
- * All requests include Authorization header.
- * All responses are typed via shared types.
+ * All requests include Authorization header via interceptor.
+ * All responses are fully typed.
+ *
+ * Image Upload Flow:
+ *   1. uploadMediaAsset(file) → { id: assetId }
+ *   2. createReelProject({ ...data, source_image_id: assetId })
+ *   3. Redirect to /dashboard/reels/{project.id}
  */
 
 import axios, { AxiosError, AxiosInstance } from "axios";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Shared Types ──────────────────────────────────────────────────────────────
 
 export interface ApiError {
   code: string;
   message: string;
   request_id: string;
   details?: Record<string, unknown>;
-}
-
-export interface ReelProject {
-  id: string;
-  workspace_id: string;
-  title: string | null;
-  prompt: string;
-  language: string;
-  tone: string | null;
-  duration_seconds: number;
-  cta_text: string | null;
-  status: ReelProjectStatus;
-  latest_version_id: string | null;
-  source_image_id: string | null;
-  latest_version?: ReelVersion;
-  created_at: string;
-  updated_at: string;
 }
 
 export type ReelProjectStatus =
@@ -52,24 +40,6 @@ export type ReelProjectStatus =
   | "failed_instagram_upload"
   | "failed_instagram_publish";
 
-export interface ReelVersion {
-  id: string;
-  project_id: string;
-  version_number: number;
-  hook: string | null;
-  script: string | null;
-  scenes: Scene[] | null;
-  voiceover_text: string | null;
-  subtitle_lines: SubtitleLine[] | null;
-  caption: string | null;
-  hashtags: string[] | null;
-  estimated_duration: number | null;
-  status: ReelProjectStatus;
-  approved_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface Scene {
   scene_number: number;
   duration_seconds: number;
@@ -82,6 +52,86 @@ export interface SubtitleLine {
   start_seconds: number;
   end_seconds: number;
   text: string;
+}
+
+export interface ReelVersion {
+  id: string;
+  project_id: string;
+  version_number: number;
+  hook: string | null;
+  script: string | null;
+  scenes: Scene[] | null;
+  voiceover_text: string | null;
+  subtitle_lines: SubtitleLine[] | null;
+  caption: string | null;
+  hashtags: string[] | null;
+  video_prompt: string | null;
+  estimated_duration: number | null;
+  moderation_flags: Record<string, unknown> | null;
+  status: ReelProjectStatus;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReelProject {
+  id: string;
+  workspace_id: string;
+  title: string | null;
+  prompt: string;
+  language: string;
+  tone: string | null;
+  duration_seconds: number;
+  cta_text: string | null;
+  status: ReelProjectStatus;
+  latest_version_id: string | null;
+  source_image_id: string | null;
+  latest_version?: ReelVersion | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  workspace_id: string;
+  asset_type: string;
+  s3_key: string;
+  filename: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  status: string;
+  created_at: string;
+}
+
+export interface GenerationJob {
+  id: string;
+  project_id: string;
+  version_id: string | null;
+  job_type: string;
+  status: "queued" | "running" | "complete" | "failed";
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateReelProjectRequest {
+  workspace_id?: string;
+  prompt: string;
+  language?: string;
+  tone?: string;
+  duration_seconds?: number;
+  cta_text?: string;
+  title?: string;
+  source_image_id?: string;
+}
+
+export interface CreateReelProjectResponse {
+  project: ReelProject;
+  version: ReelVersion;
+  generation_job: GenerationJob;
 }
 
 export interface SocialAccount {
@@ -108,22 +158,6 @@ export interface PublishJob {
   error_message: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface CreateReelProjectRequest {
-  workspace_id: string;
-  prompt: string;
-  language?: string;
-  tone?: string;
-  duration_seconds?: number;
-  cta_text?: string;
-  title?: string;
-}
-
-export interface CreatePublishJobRequest {
-  project_id: string;
-  social_account_id: string;
-  schedule_time?: string;
 }
 
 export interface User {
@@ -156,7 +190,7 @@ class ApiClient {
       timeout: 30000,
     });
 
-    // Add auth token to every request
+    // Inject Bearer token from localStorage on every request
     this.client.interceptors.request.use((config) => {
       const token =
         typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -169,12 +203,13 @@ class ApiClient {
     // Normalize error responses
     this.client.interceptors.response.use(
       (res) => res,
-      (error: AxiosError<{ error?: ApiError, detail?: string | any }>) => {
+      (error: AxiosError<{ error?: ApiError; detail?: string | unknown }>) => {
         const apiError: ApiError = error.response?.data?.error ?? {
           code: "NETWORK_ERROR",
-          message: typeof error.response?.data?.detail === "string" 
-            ? error.response.data.detail 
-            : error.message,
+          message:
+            typeof error.response?.data?.detail === "string"
+              ? error.response.data.detail
+              : error.message,
           request_id: "unknown",
         };
         return Promise.reject(apiError);
@@ -193,11 +228,11 @@ class ApiClient {
   }
 
   async register(email: string, password: string, fullName?: string) {
-    const res = await this.client.post<{ user: User; workspace: Workspace; access_token: string }>("/api/v1/auth/register", {
-      email,
-      password,
-      full_name: fullName,
-    });
+    const res = await this.client.post<{
+      user: User;
+      workspace: Workspace;
+      access_token: string;
+    }>("/api/v1/auth/register", { email, password, full_name: fullName });
     return res.data;
   }
 
@@ -213,37 +248,75 @@ class ApiClient {
     }
   }
 
-  // ── Reel Projects ─────────────────────────────────────────────────────────
+  // ── Media Assets ──────────────────────────────────────────────────────────
 
-  async listReelProjects(workspaceId: string): Promise<ReelProject[]> {
-    const res = await this.client.get<ReelProject[]>("/api/v1/reel-projects", {
-      params: { workspace_id: workspaceId },
+  /**
+   * Upload a source image file for reel generation.
+   * Returns a MediaAsset with id — use as source_image_id when creating a reel.
+   */
+  async uploadMediaAsset(file: File): Promise<MediaAsset> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await this.client.post<MediaAsset>("/api/v1/media-assets/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
     });
     return res.data;
   }
 
-  async createReelProject(data: CreateReelProjectRequest): Promise<ReelProject & { upload_url?: string; asset_id?: string }> {
-    const res = await this.client.post<ReelProject & { upload_url?: string; asset_id?: string }>(
-      "/api/v1/reel-projects",
+  // ── Reel Projects ─────────────────────────────────────────────────────────
+
+  /**
+   * Create a new reel project. Returns project + version + generation_job.
+   * Call uploadMediaAsset() first to get source_image_id.
+   */
+  async createReelProject(
+    data: CreateReelProjectRequest
+  ): Promise<CreateReelProjectResponse> {
+    const res = await this.client.post<CreateReelProjectResponse>(
+      "/api/v1/reel-projects/",
       data
     );
     return res.data;
   }
 
+  /**
+   * List all reel projects for the authenticated user's workspaces.
+   */
+  async listReelProjects(): Promise<ReelProject[]> {
+    const res = await this.client.get<ReelProject[]>("/api/v1/reel-projects/");
+    return res.data;
+  }
+
+  /**
+   * Get full reel project detail including latest_version content.
+   * Poll this while status === "script_generating".
+   */
   async getReelProject(id: string): Promise<ReelProject> {
     const res = await this.client.get<ReelProject>(`/api/v1/reel-projects/${id}`);
     return res.data;
   }
 
-  async startGeneration(projectId: string): Promise<{ job_id: string; status: string }> {
-    const res = await this.client.patch<{ job_id: string; status: string }>(
-      `/api/v1/reel-projects/${projectId}/start-generation`
-    );
+  /**
+   * Trigger regeneration — creates a new version + job.
+   */
+  async regenerateReelProject(
+    projectId: string
+  ): Promise<{ version: ReelVersion; generation_job: GenerationJob }> {
+    const res = await this.client.post<{
+      version: ReelVersion;
+      generation_job: GenerationJob;
+    }>(`/api/v1/reel-projects/${projectId}/regenerate`);
     return res.data;
   }
 
-  async retryGeneration(projectId: string): Promise<void> {
-    await this.client.post(`/api/v1/reel-projects/${projectId}/retry`);
+  /**
+   * Get all generation/render/publish jobs for a project (timeline).
+   */
+  async getReelProjectJobs(projectId: string): Promise<GenerationJob[]> {
+    const res = await this.client.get<GenerationJob[]>(
+      `/api/v1/reel-projects/${projectId}/jobs`
+    );
+    return res.data;
   }
 
   // ── Reel Versions ─────────────────────────────────────────────────────────
@@ -285,7 +358,11 @@ class ApiClient {
 
   // ── Publish Jobs ──────────────────────────────────────────────────────────
 
-  async createPublishJob(data: CreatePublishJobRequest): Promise<PublishJob> {
+  async createPublishJob(data: {
+    project_id: string;
+    social_account_id: string;
+    schedule_time?: string;
+  }): Promise<PublishJob> {
     const res = await this.client.post<PublishJob>("/api/v1/publish-jobs", data);
     return res.data;
   }
@@ -294,31 +371,8 @@ class ApiClient {
     const res = await this.client.get<PublishJob>(`/api/v1/publish-jobs/${id}`);
     return res.data;
   }
-
-  // ── Media Assets ──────────────────────────────────────────────────────────
-
-  async getUploadUrl(data: {
-    filename: string;
-    mime_type: string;
-    file_size: number;
-    project_id?: string;
-  }): Promise<{ asset_id: string; upload_url: string; expires_at: string }> {
-    const res = await this.client.post("/api/v1/media-assets/upload-url", data);
-    return res.data;
-  }
-
-  async confirmUpload(assetId: string): Promise<void> {
-    await this.client.patch(`/api/v1/media-assets/${assetId}/confirm-upload`);
-  }
-
-  async uploadFileToS3(uploadUrl: string, file: File): Promise<void> {
-    await axios.put(uploadUrl, file, {
-      headers: { "Content-Type": file.type },
-    });
-  }
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export const apiClient = new ApiClient(API_BASE_URL);

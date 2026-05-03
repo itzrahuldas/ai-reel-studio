@@ -25,6 +25,7 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
 class WorkspaceMemberResponse(OrmBaseModel):
     user_id: UUID
     workspace_id: UUID
@@ -68,68 +69,6 @@ class WorkspaceResponse(OrmBaseModel):
     created_at: datetime
 
 
-# ── Reel Project ──────────────────────────────────────────────────────────────
-
-class CreateReelProjectRequest(BaseModel):
-    workspace_id: UUID
-    prompt: str = Field(..., min_length=10, max_length=2000)
-    language: str = Field(default="en", pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
-    tone: str | None = Field(None, max_length=100)
-    duration_seconds: int = Field(default=30, ge=15, le=90)
-    cta_text: str | None = Field(None, max_length=500)
-    title: str | None = Field(None, max_length=500)
-
-
-class ReelProjectResponse(OrmBaseModel):
-    id: UUID
-    workspace_id: UUID
-    title: str | None
-    prompt: str
-    language: str
-    tone: str | None
-    duration_seconds: int
-    cta_text: str | None
-    status: str
-    latest_version_id: UUID | None
-    source_image_id: UUID | None
-    created_at: datetime
-    updated_at: datetime
-
-
-class ReelVersionResponse(OrmBaseModel):
-    id: UUID
-    project_id: UUID
-    version_number: int
-    hook: str | None
-    script: str | None
-    scenes: list | None
-    voiceover_text: str | None
-    subtitle_lines: list | None
-    caption: str | None
-    hashtags: list[str] | None
-    estimated_duration: int | None
-    status: str
-    approved_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
-class UpdateCaptionRequest(BaseModel):
-    caption: str = Field(..., max_length=2200)
-
-
-class UpdateHashtagsRequest(BaseModel):
-    hashtags: list[str] = Field(..., max_items=30)
-
-
-class ApproveVersionRequest(BaseModel):
-    pass  # No body needed; auth token identifies the approver
-
-
-class RejectVersionRequest(BaseModel):
-    reason: str | None = Field(None, max_length=1000)
-
-
 # ── Media Assets ──────────────────────────────────────────────────────────────
 
 class UploadURLRequest(BaseModel):
@@ -147,12 +86,90 @@ class UploadURLResponse(BaseModel):
 
 class MediaAssetResponse(OrmBaseModel):
     id: UUID
+    workspace_id: UUID
     asset_type: str
     s3_key: str
+    filename: str | None
     mime_type: str | None
     file_size: int | None
     status: str
     created_at: datetime
+
+
+# ── Reel Version ──────────────────────────────────────────────────────────────
+
+class ReelVersionResponse(OrmBaseModel):
+    id: UUID
+    project_id: UUID
+    version_number: int
+    hook: str | None
+    script: str | None
+    scenes: list | None
+    voiceover_text: str | None
+    subtitle_lines: list | None
+    caption: str | None
+    hashtags: list[str] | None
+    video_prompt: str | None
+    estimated_duration: int | None
+    moderation_flags: dict | None
+    status: str
+    approved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ── Reel Project ──────────────────────────────────────────────────────────────
+
+class CreateReelProjectRequest(BaseModel):
+    workspace_id: UUID | None = None
+    prompt: str = Field(..., min_length=5, max_length=2000)
+    # Loosened language validation: allow 'en', 'hi', 'hinglish', 'en-US', etc.
+    language: str = Field(default="en", max_length=30)
+    tone: str | None = Field(None, max_length=100)
+    duration_seconds: int = Field(default=15, ge=10, le=60)
+    cta_text: str | None = Field(None, max_length=500)
+    title: str | None = Field(None, max_length=500)
+    source_image_id: UUID | None = None
+
+
+class ReelProjectResponse(OrmBaseModel):
+    id: UUID
+    workspace_id: UUID
+    title: str | None
+    prompt: str
+    language: str
+    tone: str | None
+    duration_seconds: int
+    cta_text: str | None
+    status: str
+    latest_version_id: UUID | None
+    source_image_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+    # Enriched detail (optional — populated on detail endpoint)
+    latest_version: ReelVersionResponse | None = None
+
+
+class CreateReelProjectResponse(BaseModel):
+    project: ReelProjectResponse
+    version: ReelVersionResponse
+    generation_job: "GenerationJobResponse"
+
+
+class UpdateCaptionRequest(BaseModel):
+    caption: str = Field(..., max_length=2200)
+
+
+class UpdateHashtagsRequest(BaseModel):
+    hashtags: list[str] = Field(..., max_length=30)
+
+
+class ApproveVersionRequest(BaseModel):
+    pass  # No body needed; auth token identifies the approver
+
+
+class RejectVersionRequest(BaseModel):
+    reason: str | None = Field(None, max_length=1000)
 
 
 # ── Publish Jobs ──────────────────────────────────────────────────────────────
@@ -204,6 +221,7 @@ class GenerationJobResponse(OrmBaseModel):
     error_message: str | None
     retry_count: int
     created_at: datetime
+    updated_at: datetime
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────
