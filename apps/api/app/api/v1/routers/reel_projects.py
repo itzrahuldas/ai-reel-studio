@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     CreateReelProjectRequest,
     CreateReelProjectResponse,
     CreateRenderJobResponse,
+    CreatePublishJobResponse,
     SchedulePublishJobRequest,
     GenerationJobResponse,
     PublishJobResponse,
