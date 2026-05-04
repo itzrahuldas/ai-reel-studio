@@ -25,7 +25,10 @@ from app.models.models import (
     ReelVersion,
     RenderJob,
     WorkspaceMember,
+    UsageEventType,
 )
+from app.services.usage_service import consume_usage
+
 from app.services.ai.base import SubtitleLine
 from app.services.rendering.ffmpeg_renderer import FFmpegRenderer, RenderParams
 from app.services.rendering.subtitles import write_srt_file
@@ -64,9 +67,10 @@ async def create_render_job(
     db: AsyncSession,
     user_id: uuid.UUID,
     project_id: uuid.UUID,
+    version_id: uuid.UUID | None = None,
 ) -> tuple[RenderJob, ReelProject, ReelVersion]:
     """
-    Create a RenderJob for the project's latest generated version,
+    Create a RenderJob for the project's generated version,
     then run sync or async pipeline per GENERATION_MODE setting.
     """
     # ── Auth & ownership ──────────────────────────────────────────────────────
@@ -83,18 +87,30 @@ async def create_render_job(
         raise HTTPException(status_code=404, detail="Project not found")
 
     # ── Validate state ────────────────────────────────────────────────────────
-    if not project.latest_version_id:
+    target_version_id = version_id or project.latest_version_id
+    if not target_version_id:
         raise HTTPException(status_code=400, detail="No generated version to render")
 
-    version = await db.get(ReelVersion, project.latest_version_id)
-    if not version:
-        raise HTTPException(status_code=400, detail="Latest version record not found")
+    version = await db.get(ReelVersion, target_version_id)
+    if not version or version.project_id != project.id:
+        raise HTTPException(status_code=400, detail="Version record not found")
 
     if not version.script:
         raise HTTPException(
             status_code=400,
             detail="Version has no generated content. Run AI generation first.",
         )
+
+    # ── Consume Usage ────────────────────────────────────────────────────────
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.RENDER,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id
+    )
 
     # ── Create RenderJob ──────────────────────────────────────────────────────
     render_job = RenderJob(
@@ -255,14 +271,28 @@ async def _run_render_pipeline_inline(
 
             # ── Run FFmpeg renderer ───────────────────────────────────────────
             renderer = FFmpegRenderer()
+
+            # Apply render settings if present
+            duration = project.duration_seconds
+            cta_text = project.cta_text
+            if version.render_settings:
+                if "duration_seconds" in version.render_settings and version.render_settings["duration_seconds"] is not None:
+                    duration = version.render_settings["duration_seconds"]
+                if "cta_position" in version.render_settings and version.render_settings["cta_position"] is not None:
+                    # In phase 1, we just respect the text override or position flag conceptually,
+                    # but cta_text itself might be edited via updateReelVersion which currently doesn't
+                    # update project.cta_text. We should use version.caption/hook for content, but cta is in project.
+                    # Actually we didn't add cta_text to UpdateReelVersionRequest. Let's just use project.cta_text for now.
+                    pass
+
             params = RenderParams(
                 image_path=image_path,
                 output_path=output_path,
                 thumbnail_path=thumbnail_path,
-                duration_seconds=project.duration_seconds,
+                duration_seconds=duration,
                 audio_path=None,  # TTS audio not implemented yet
                 srt_path=srt_path,
-                cta_text=project.cta_text,
+                cta_text=cta_text,
             )
             result = await renderer.render(params)
 

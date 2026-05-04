@@ -178,7 +178,7 @@ export interface PublishJob {
   project_id: string;
   version_id: string;
   social_account_id: string;
-  status: "queued" | "container_created" | "polling" | "published" | "failed" | "cancelled";
+  status: "queued" | "container_created" | "polling" | "published" | "failed" | "cancelled" | "scheduled" | "reconnect_required";
   ig_container_id: string | null;
   ig_media_id: string | null;
   scheduled_for: string | null;
@@ -193,6 +193,67 @@ export interface CreatePublishJobResponse {
   publish_job: PublishJob;
   project: ReelProject;
   version: ReelVersion;
+}
+
+export interface SchedulePublishJobRequest {
+  social_account_id: string;
+  caption?: string;
+  share_to_feed?: boolean;
+  allow_comments?: boolean;
+  scheduled_at: string;
+  schedule_timezone?: string;
+}
+
+export interface StoryboardSceneInput {
+  scene_number?: number;
+  start_time: number;
+  end_time: number;
+  visual_description: string;
+  text_overlay?: string;
+  voiceover_text?: string;
+}
+
+export interface SubtitleLineInput {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+}
+
+export interface RenderSettingsInput {
+  duration_seconds?: number;
+  resolution?: string;
+  fps?: number;
+  subtitle_style?: string;
+  text_position?: string;
+  cta_position?: string;
+  include_caption_burn_in?: boolean;
+}
+
+export interface UpdateReelVersionRequest {
+  hook?: string;
+  script?: string;
+  storyboard?: StoryboardSceneInput[];
+  voiceover_text?: string;
+  subtitle_lines?: SubtitleLineInput[];
+  caption?: string;
+  hashtags?: string[];
+  video_prompt?: string;
+  render_settings?: RenderSettingsInput;
+}
+
+export interface ReelVersionEditorResponse {
+  project: ReelProject;
+  version: ReelVersion;
+  can_edit: boolean;
+  can_render: boolean;
+  can_publish: boolean;
+  has_unrendered_edits: boolean;
+}
+
+export interface SaveEditorDraftResponse {
+  project: ReelProject;
+  version: ReelVersion;
+  message: string;
 }
 
 export interface User {
@@ -213,7 +274,47 @@ export interface Workspace {
   created_at: string;
 }
 
+// ── Billing & Usage Types ──────────────────────────────────────────────────────
+
+export type PlanKey = "FREE" | "CREATOR" | "PRO";
+export type UsageEventType = "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED_PUBLISH";
+
+export interface PlanDefinition {
+  key: PlanKey;
+  name: string;
+  ai_generations_per_month: number;
+  renders_per_month: number;
+  publishes_per_month: number;
+  scheduled_publishes_limit: number;
+  watermark_enabled: boolean;
+}
+
+export interface UsageSummary {
+  plan: PlanDefinition;
+  period_start: string;
+  period_end: string;
+  ai_generations_used: number;
+  ai_generations_limit: number;
+  renders_used: number;
+  renders_limit: number;
+  publishes_used: number;
+  publishes_limit: number;
+  active_scheduled_publishes: number;
+  scheduled_publishes_limit: number;
+}
+
+/** Error shape returned for HTTP 402 usage limit exceeded */
+export interface UsageLimitError {
+  code: "USAGE_LIMIT_EXCEEDED";
+  message: string;
+  plan_key: PlanKey;
+  limit: number;
+  used: number;
+  upgrade_required: boolean;
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
+
 
 class ApiClient {
   private client: AxiosInstance;
@@ -360,16 +461,21 @@ class ApiClient {
   }
 
   /**
-   * Trigger rendering for the latest version.
+   * Trigger rendering for the specified or latest version.
    */
   async renderReelProject(
-    projectId: string
+    projectId: string,
+    versionId?: string
   ): Promise<{ render_job: RenderJob; project: ReelProject; version: ReelVersion }> {
+    let url = `/api/v1/reel-projects/${projectId}/render`;
+    if (versionId) {
+      url += `?version_id=${versionId}`;
+    }
     const res = await this.client.post<{
       render_job: RenderJob;
       project: ReelProject;
       version: ReelVersion;
-    }>(`/api/v1/reel-projects/${projectId}/render`);
+    }>(url);
     return res.data;
   }
 
@@ -379,6 +485,34 @@ class ApiClient {
   async getRenderJobs(projectId: string): Promise<RenderJob[]> {
     const res = await this.client.get<RenderJob[]>(
       `/api/v1/reel-projects/${projectId}/render-jobs`
+    );
+    return res.data;
+  }
+
+  // ── Editor ─────────────────────────────────────────────────────────────────
+
+  async getReelEditorData(projectId: string): Promise<ReelVersionEditorResponse> {
+    const res = await this.client.get<ReelVersionEditorResponse>(
+      `/api/v1/reel-projects/${projectId}/editor`
+    );
+    return res.data;
+  }
+
+  async updateReelVersion(
+    projectId: string,
+    versionId: string,
+    data: UpdateReelVersionRequest
+  ): Promise<SaveEditorDraftResponse> {
+    const res = await this.client.put<SaveEditorDraftResponse>(
+      `/api/v1/reel-projects/${projectId}/versions/${versionId}`,
+      data
+    );
+    return res.data;
+  }
+
+  async cloneReelVersion(projectId: string, versionId: string): Promise<ReelVersion> {
+    const res = await this.client.post<ReelVersion>(
+      `/api/v1/reel-projects/${projectId}/versions/${versionId}/clone`
     );
     return res.data;
   }
@@ -446,16 +580,29 @@ class ApiClient {
 
   async publishReelProject(
     projectId: string,
-    data: {
-      social_account_id: string;
-      caption?: string;
-      share_to_feed?: boolean;
-      allow_comments?: boolean;
-    }
+    data: { social_account_id: string; caption?: string }
   ): Promise<CreatePublishJobResponse> {
     const res = await this.client.post<CreatePublishJobResponse>(
       `/api/v1/reel-projects/${projectId}/publish`,
       data
+    );
+    return res.data;
+  }
+
+  async scheduleReelProject(
+    projectId: string,
+    data: SchedulePublishJobRequest
+  ): Promise<CreatePublishJobResponse> {
+    const res = await this.client.post<CreatePublishJobResponse>(
+      `/api/v1/reel-projects/${projectId}/schedule`,
+      data
+    );
+    return res.data;
+  }
+
+  async cancelScheduledPublishJob(jobId: string): Promise<PublishJob> {
+    const res = await this.client.delete<PublishJob>(
+      `/api/v1/reel-projects/publish-jobs/${jobId}/schedule`
     );
     return res.data;
   }
@@ -470,6 +617,49 @@ class ApiClient {
   async retryPublishJob(jobId: string): Promise<PublishJob> {
     const res = await this.client.post<PublishJob>(
       `/api/v1/reel-projects/publish-jobs/${jobId}/retry`
+    );
+    return res.data;
+  }
+
+  // ── Billing & Usage ───────────────────────────────────────────────────────
+
+  /**
+   * Get all available plan definitions (public — no auth needed).
+   */
+  async getPlans(): Promise<PlanDefinition[]> {
+    const res = await this.client.get<PlanDefinition[]>("/api/v1/billing/plans");
+    return res.data;
+  }
+
+  /**
+   * Get current usage summary for the authenticated workspace.
+   * Use this to populate usage bars and upgrade CTAs.
+   */
+  async getUsageSummary(): Promise<UsageSummary> {
+    const res = await this.client.get<UsageSummary>("/api/v1/billing/usage");
+    return res.data;
+  }
+
+  /**
+   * DEV ONLY — Override plan for the authenticated workspace.
+   * Only works when backend APP_ENV=development.
+   */
+  async devSetPlan(planKey: PlanKey): Promise<{ message: string; plan: PlanDefinition }> {
+    const res = await this.client.post<{ message: string; plan: PlanDefinition }>(
+      "/api/v1/billing/dev/set-plan",
+      { plan_key: planKey }
+    );
+    return res.data;
+  }
+
+  /**
+   * DEV ONLY — Grant artificial usage for testing limit enforcement.
+   * Only works when backend APP_ENV=development.
+   */
+  async devGrantUsage(eventType: UsageEventType, quantity: number): Promise<{ message: string }> {
+    const res = await this.client.post<{ message: string }>(
+      "/api/v1/billing/dev/grant-usage",
+      { event_type: eventType, quantity }
     );
     return res.data;
   }
