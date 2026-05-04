@@ -104,6 +104,21 @@ class WorkspaceMemberRole(str, enum.Enum):
     VIEWER = "viewer"
 
 
+class SubscriptionStatus(str, enum.Enum):
+    ACTIVE = "active"
+    CANCELED = "canceled"
+    PAST_DUE = "past_due"
+    TRIALING = "trialing"
+
+
+class UsageEventType(str, enum.Enum):
+    AI_GENERATION = "AI_GENERATION"
+    RENDER = "RENDER"
+    PUBLISH = "PUBLISH"
+    SCHEDULED_PUBLISH = "SCHEDULED_PUBLISH"
+
+
+
 # ── Mixin ───────────────────────────────────────────────────────────────────
 
 
@@ -155,6 +170,9 @@ class Workspace(TimestampMixin, Base):
     members: Mapped[list["WorkspaceMember"]] = relationship(back_populates="workspace")
     social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="workspace")
     reel_projects: Mapped[list["ReelProject"]] = relationship(back_populates="workspace")
+    subscription: Mapped["WorkspaceSubscription"] = relationship(back_populates="workspace", uselist=False)
+    usage_counters: Mapped[list["UsageCounter"]] = relationship(back_populates="workspace")
+    usage_events: Mapped[list["UsageEvent"]] = relationship(back_populates="workspace")
 
 
 class WorkspaceMember(TimestampMixin, Base):
@@ -346,7 +364,62 @@ class PublishJob(TimestampMixin, Base):
 
     # Relationships
     project: Mapped["ReelProject"] = relationship(back_populates="publish_jobs")
+    version: Mapped["ReelVersion"] = relationship()
     social_account: Mapped["SocialAccount"] = relationship(back_populates="publish_jobs")
+
+
+class WorkspaceSubscription(TimestampMixin, Base):
+    __tablename__ = "workspace_subscriptions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, unique=True)
+    plan_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE, nullable=False)
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="subscription")
+
+
+class UsageCounter(TimestampMixin, Base):
+    __tablename__ = "usage_counters"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    ai_generations_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    renders_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    publishes_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    scheduled_publishes_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="usage_counters")
+
+
+class UsageEvent(TimestampMixin, Base):
+    __tablename__ = "usage_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    event_type: Mapped[UsageEventType] = mapped_column(Enum(UsageEventType), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    
+    # Context references
+    related_project_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    related_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    related_job_id: Mapped[str | None] = mapped_column(String(255)) # string for flexibility if we use worker UUIDs
+    
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(back_populates="usage_events")
+
 
 
 class AuditLog(Base):

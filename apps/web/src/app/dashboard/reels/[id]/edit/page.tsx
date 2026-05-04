@@ -63,8 +63,9 @@ export default function EditorPage() {
       setStoryboard((data.version.scenes as unknown as StoryboardSceneInput[]) || []);
       setSubtitles((data.version.subtitle_lines as unknown as SubtitleLineInput[]) || []);
       setDuration(
-        data.version.render_settings?.duration_seconds || 
-        data.project.duration_seconds || 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (data.version as any).render_settings?.duration_seconds ||
+        data.project.duration_seconds ||
         30
       );
     }

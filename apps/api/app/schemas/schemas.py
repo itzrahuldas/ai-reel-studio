@@ -1,9 +1,13 @@
 """Pydantic schemas for request/response validation."""
 
+import enum
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+# Forward import for UsageEventType — resolved at runtime to avoid circular deps
+# from app.models.models import UsageEventType  # noqa: E402 (resolved lazily below)
 
 # ── Base ─────────────────────────────────────────────────────────────────────
 
@@ -312,6 +316,57 @@ class PublishJobResponse(OrmBaseModel):
     next_attempt_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+# ── Billing & Usage Schemas ──────────────────────────────────────────────────
+
+class PlanKey(str, enum.Enum):
+    FREE = "FREE"
+    CREATOR = "CREATOR"
+    PRO = "PRO"
+
+class PlanDefinition(BaseModel):
+    key: PlanKey
+    name: str
+    ai_generations_per_month: int
+    renders_per_month: int
+    publishes_per_month: int
+    scheduled_publishes_limit: int
+    watermark_enabled: bool
+
+class UsageSummaryResponse(BaseModel):
+    plan: PlanDefinition
+    period_start: datetime
+    period_end: datetime
+    
+    ai_generations_used: int
+    ai_generations_limit: int
+    
+    renders_used: int
+    renders_limit: int
+    
+    publishes_used: int
+    publishes_limit: int
+    
+    active_scheduled_publishes: int
+    scheduled_publishes_limit: int
+
+class UsageEventResponse(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    user_id: UUID | None
+    event_type: str  # "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED_PUBLISH"
+    quantity: int
+    created_at: datetime
+
+
+class SetDevPlanRequest(BaseModel):
+    plan_key: PlanKey
+
+
+class GrantDevUsageRequest(BaseModel):
+    event_type: str  # "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED_PUBLISH"
+    quantity: int
 
 
 class CreatePublishJobRequest(BaseModel):

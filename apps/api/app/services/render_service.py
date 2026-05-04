@@ -25,7 +25,10 @@ from app.models.models import (
     ReelVersion,
     RenderJob,
     WorkspaceMember,
+    UsageEventType,
 )
+from app.services.usage_service import consume_usage
+
 from app.services.ai.base import SubtitleLine
 from app.services.rendering.ffmpeg_renderer import FFmpegRenderer, RenderParams
 from app.services.rendering.subtitles import write_srt_file
@@ -97,6 +100,17 @@ async def create_render_job(
             status_code=400,
             detail="Version has no generated content. Run AI generation first.",
         )
+
+    # ── Consume Usage ────────────────────────────────────────────────────────
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.RENDER,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id
+    )
 
     # ── Create RenderJob ──────────────────────────────────────────────────────
     render_job = RenderJob(

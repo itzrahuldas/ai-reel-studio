@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.routers import auth, integrations, media_assets, reel_projects, workspaces
+from app.api.v1.routers import auth, billing, integrations, media_assets, reel_projects, workspaces
 
 api_v1_router = APIRouter()
 
@@ -9,3 +9,4 @@ api_v1_router.include_router(workspaces.router, prefix="/workspaces", tags=["Wor
 api_v1_router.include_router(reel_projects.router, prefix="/reel-projects", tags=["Reel Projects"])
 api_v1_router.include_router(media_assets.router, prefix="/media-assets", tags=["Media Assets"])
 api_v1_router.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
+api_v1_router.include_router(billing.router, prefix="/billing", tags=["Billing & Usage"])

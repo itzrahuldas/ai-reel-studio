@@ -18,9 +18,12 @@ from app.models.models import (
     ReelProject,
     ReelProjectStatus,
     ReelVersion,
+    RenderJob,
+    UsageEventType,
     WorkspaceMember,
 )
 from app.schemas.schemas import CreateReelProjectRequest
+from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -62,6 +65,15 @@ async def create_reel_project(
     inline (sync mode).
     """
     workspace_id = await get_user_workspace_id(db, user_id, data.workspace_id)
+    
+    # Check and consume AI generation usage limit before creating anything
+    await consume_usage(
+        db=db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.AI_GENERATION,
+        quantity=1
+    )
 
     # ── 1. ReelProject ────────────────────────────────────────────────────────
     project = ReelProject(
@@ -256,6 +268,16 @@ async def regenerate_reel_project(
     """Create a new version + job and enqueue/run mock generation."""
     project = await get_project_by_id(db, user_id, project_id)
 
+    # Consume usage for regeneration
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.AI_GENERATION,
+        quantity=1,
+        related_project_id=project.id
+    )
+
     # Count existing versions
     stmt = select(ReelVersion).where(ReelVersion.project_id == project_id)
     existing = list((await db.execute(stmt)).scalars().all())
@@ -350,7 +372,8 @@ async def get_project_by_id(
             ReelProject.id == project_id,
         )
     )
-    project = (await db.execute(stmt)).scalars().first()
+    result = await db.execute(stmt)
+    project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project

@@ -23,8 +23,10 @@ from app.models.models import (
     ReelVersion,
     SocialAccount,
     SocialAccountStatus,
+    UsageEventType,
     WorkspaceMember,
 )
+from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -143,6 +145,17 @@ async def create_publish_job(
         db, user_id, project_id, data.social_account_id
     )
 
+    # Consume usage
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.PUBLISH,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id
+    )
+
     # Use caption from request, fallback to version.caption
     caption = data.caption if data.caption is not None else version.caption
     if not caption:
@@ -177,37 +190,34 @@ async def create_publish_job(
         workspace_id=project.workspace_id,
         user_id=user_id,
         action="publish_job_created",
-        entity_type="reel_project",
-        entity_id=project.id,
-        details={"job_id": str(job.id), "social_account_id": str(social_account.id)}
+        resource_type="reel_project",
+        resource_id=project.id,
+        metadata_={"job_id": str(job.id), "social_account_id": str(social_account.id)},
     )
     db.add(log)
 
     await db.commit()
     await db.refresh(job)
 
-    # Enqueue task
+    # Enqueue or run inline
     if settings.PUBLISH_MODE == "async":
-        # Deferred import to avoid circular dependency
-        from apps.worker.app.tasks.publish_reel import publish_reel_task
-        task = publish_reel_task.delay(str(job.id))
-        job.celery_task_id = task.id
-        await db.commit()
-        await db.refresh(job)
+        try:
+            from app.workers.celery_client import celery_client
+            task = celery_client.send_task(
+                "app.tasks.publish_reel.publish_reel_task",
+                args=[str(job.id)],
+                queue="publishing",
+            )
+            job.celery_task_id = str(task.id)
+            await db.commit()
+            await db.refresh(job)
+        except Exception as e:
+            logger.warning("celery_publish_enqueue_failed", error=str(e))
     else:
-        # Sync mode - execute immediately
+        # Sync mode — run publish pipeline inline in a background task
         import asyncio
-
-        from apps.worker.app.tasks.publish_reel import run_publish_pipeline
-
-        # We need a new session for the sync worker
-        from app.db.session import AsyncSessionLocal
-
-        async def _run_sync():
-            async with AsyncSessionLocal() as session:
-                await run_publish_pipeline(session, str(job.id))
-
-        asyncio.create_task(_run_sync())
+        from app.services._publish_pipeline import run_publish_pipeline_inline
+        asyncio.create_task(run_publish_pipeline_inline(str(job.id)))
 
     return job, project, version
 
@@ -256,20 +266,21 @@ async def retry_publish_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.U
     await db.commit()
 
     if settings.PUBLISH_MODE == "async":
-        from apps.worker.app.tasks.publish_reel import publish_reel_task
-        task = publish_reel_task.delay(str(job.id))
-        job.celery_task_id = task.id
-        await db.commit()
+        try:
+            from app.workers.celery_client import celery_client
+            task = celery_client.send_task(
+                "app.tasks.publish_reel.publish_reel_task",
+                args=[str(job.id)],
+                queue="publishing",
+            )
+            job.celery_task_id = str(task.id)
+            await db.commit()
+        except Exception as e:
+            logger.warning("celery_publish_retry_enqueue_failed", error=str(e))
     else:
         import asyncio
-
-        from apps.worker.app.tasks.publish_reel import run_publish_pipeline
-
-        from app.db.session import AsyncSessionLocal
-        async def _run_sync():
-            async with AsyncSessionLocal() as session:
-                await run_publish_pipeline(session, str(job.id))
-        asyncio.create_task(_run_sync())
+        from app.services._publish_pipeline import run_publish_pipeline_inline
+        asyncio.create_task(run_publish_pipeline_inline(str(job.id)))
 
     return job
 
@@ -286,6 +297,17 @@ async def schedule_publish_job(
     
     project, version, social_account, asset = await validate_publish_preflight(
         db, user_id, project_id, data.social_account_id
+    )
+
+    # Consume usage
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.SCHEDULED_PUBLISH,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id
     )
 
     now = datetime.now(UTC)
@@ -324,9 +346,13 @@ async def schedule_publish_job(
         workspace_id=project.workspace_id,
         user_id=user_id,
         action="publish_job_scheduled",
-        entity_type="reel_project",
-        entity_id=project.id,
-        details={"job_id": str(job.id), "social_account_id": str(social_account.id), "scheduled_for": data.scheduled_at.isoformat()}
+        resource_type="reel_project",
+        resource_id=project.id,
+        metadata_={
+            "job_id": str(job.id),
+            "social_account_id": str(social_account.id),
+            "scheduled_for": data.scheduled_at.isoformat(),
+        },
     )
     db.add(log)
 

@@ -178,7 +178,7 @@ export interface PublishJob {
   project_id: string;
   version_id: string;
   social_account_id: string;
-  status: "queued" | "container_created" | "polling" | "published" | "failed" | "cancelled";
+  status: "queued" | "container_created" | "polling" | "published" | "failed" | "cancelled" | "scheduled" | "reconnect_required";
   ig_container_id: string | null;
   ig_media_id: string | null;
   scheduled_for: string | null;
@@ -274,7 +274,47 @@ export interface Workspace {
   created_at: string;
 }
 
+// ── Billing & Usage Types ──────────────────────────────────────────────────────
+
+export type PlanKey = "FREE" | "CREATOR" | "PRO";
+export type UsageEventType = "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED_PUBLISH";
+
+export interface PlanDefinition {
+  key: PlanKey;
+  name: string;
+  ai_generations_per_month: number;
+  renders_per_month: number;
+  publishes_per_month: number;
+  scheduled_publishes_limit: number;
+  watermark_enabled: boolean;
+}
+
+export interface UsageSummary {
+  plan: PlanDefinition;
+  period_start: string;
+  period_end: string;
+  ai_generations_used: number;
+  ai_generations_limit: number;
+  renders_used: number;
+  renders_limit: number;
+  publishes_used: number;
+  publishes_limit: number;
+  active_scheduled_publishes: number;
+  scheduled_publishes_limit: number;
+}
+
+/** Error shape returned for HTTP 402 usage limit exceeded */
+export interface UsageLimitError {
+  code: "USAGE_LIMIT_EXCEEDED";
+  message: string;
+  plan_key: PlanKey;
+  limit: number;
+  used: number;
+  upgrade_required: boolean;
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
+
 
 class ApiClient {
   private client: AxiosInstance;
@@ -577,6 +617,49 @@ class ApiClient {
   async retryPublishJob(jobId: string): Promise<PublishJob> {
     const res = await this.client.post<PublishJob>(
       `/api/v1/reel-projects/publish-jobs/${jobId}/retry`
+    );
+    return res.data;
+  }
+
+  // ── Billing & Usage ───────────────────────────────────────────────────────
+
+  /**
+   * Get all available plan definitions (public — no auth needed).
+   */
+  async getPlans(): Promise<PlanDefinition[]> {
+    const res = await this.client.get<PlanDefinition[]>("/api/v1/billing/plans");
+    return res.data;
+  }
+
+  /**
+   * Get current usage summary for the authenticated workspace.
+   * Use this to populate usage bars and upgrade CTAs.
+   */
+  async getUsageSummary(): Promise<UsageSummary> {
+    const res = await this.client.get<UsageSummary>("/api/v1/billing/usage");
+    return res.data;
+  }
+
+  /**
+   * DEV ONLY — Override plan for the authenticated workspace.
+   * Only works when backend APP_ENV=development.
+   */
+  async devSetPlan(planKey: PlanKey): Promise<{ message: string; plan: PlanDefinition }> {
+    const res = await this.client.post<{ message: string; plan: PlanDefinition }>(
+      "/api/v1/billing/dev/set-plan",
+      { plan_key: planKey }
+    );
+    return res.data;
+  }
+
+  /**
+   * DEV ONLY — Grant artificial usage for testing limit enforcement.
+   * Only works when backend APP_ENV=development.
+   */
+  async devGrantUsage(eventType: UsageEventType, quantity: number): Promise<{ message: string }> {
+    const res = await this.client.post<{ message: string }>(
+      "/api/v1/billing/dev/grant-usage",
+      { event_type: eventType, quantity }
     );
     return res.data;
   }
