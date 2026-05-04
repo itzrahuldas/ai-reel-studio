@@ -37,9 +37,24 @@ All errors return:
 | FORBIDDEN              | 403         | Insufficient permissions       |
 | RESOURCE_NOT_FOUND     | 404         | Entity not found               |
 | CONFLICT               | 409         | State conflict (e.g. already published) |
+| USAGE_LIMIT_EXCEEDED   | 402         | Plan quota reached for an expensive action |
 | RATE_LIMITED           | 429         | Too many requests              |
 | INTERNAL_ERROR         | 500         | Unexpected server error        |
 | SERVICE_UNAVAILABLE    | 503         | Upstream dependency failure    |
+
+Usage limit responses use FastAPI's `detail` field:
+```json
+{
+  "detail": {
+    "code": "USAGE_LIMIT_EXCEEDED",
+    "message": "You have reached your monthly publish limit.",
+    "plan_key": "FREE",
+    "limit": 2,
+    "used": 2,
+    "upgrade_required": true
+  }
+}
+```
 
 ---
 
@@ -136,6 +151,26 @@ Response 201: { job_id, status }
 GET  /api/v1/publish-jobs/{id}               → get publish job status
 POST /api/v1/publish-jobs/{id}/cancel        → cancel pending job
 ```
+
+---
+
+### Billing and Usage
+```
+GET  /api/v1/billing/plans
+GET  /api/v1/billing/usage
+POST /api/v1/billing/dev/set-plan
+POST /api/v1/billing/dev/grant-usage
+```
+
+Dev billing routes return 403 unless `APP_ENV=development`.
+
+Expensive reel actions can return HTTP 402:
+
+- `POST /api/v1/reel-projects`
+- `POST /api/v1/reel-projects/{id}/regenerate`
+- `POST /api/v1/reel-projects/{id}/render`
+- `POST /api/v1/reel-projects/{id}/publish`
+- `POST /api/v1/reel-projects/{id}/schedule`
 
 ---
 

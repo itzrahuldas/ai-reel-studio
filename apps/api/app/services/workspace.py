@@ -5,8 +5,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Workspace, WorkspaceMember
+from app.models.models import SubscriptionStatus, Workspace, WorkspaceMember, WorkspaceSubscription
 from app.schemas.schemas import CreateWorkspaceRequest, WorkspaceMemberResponse
+from app.services.usage_service import get_current_period_bounds
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +43,8 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
         name=data.name,
         slug=data.slug,
         plan="free",
-        is_active=True
+        is_active=True,
+        owner_id=user_id,
     )
     db.add(workspace)
     await db.flush()
@@ -53,6 +55,18 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
         role="owner"
     )
     db.add(member)
+
+    period_start, period_end = get_current_period_bounds()
+    subscription = WorkspaceSubscription(
+        workspace_id=workspace.id,
+        plan_key="FREE",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_start=period_start,
+        current_period_end=period_end,
+        cancel_at_period_end=False,
+    )
+    db.add(subscription)
+
     await db.commit()
     await db.refresh(workspace)
     return workspace

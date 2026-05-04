@@ -2,9 +2,9 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient, UsageSummary, PlanDefinition } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
+import type { PlanDefinition } from "@/lib/api-client";
 
 // ── Usage Meter ────────────────────────────────────────────────────────────────
 

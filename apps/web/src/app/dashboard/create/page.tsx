@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiClient } from "@/lib/api-client";
-import type { ApiError } from "@/lib/api-client";
+import Link from "next/link";
+import { apiClient, isUsageLimitError } from "@/lib/api-client";
+import type { ApiError, UsageLimitError } from "@/lib/api-client";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ export default function CreateReelPage() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [usageLimitError, setUsageLimitError] = useState<UsageLimitError | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -95,6 +97,7 @@ export default function CreateReelPage() {
   const onSubmit = async (formData: CreateReelFormData) => {
     setSubmitting(true);
     setApiError(null);
+    setUsageLimitError(null);
     try {
       let sourceImageId: string | undefined;
       if (imageFile) {
@@ -113,8 +116,12 @@ export default function CreateReelPage() {
       });
       router.push("/dashboard/reels/" + response.project.id);
     } catch (err) {
-      const apiErr = err as ApiError;
-      setApiError(apiErr?.message ?? "An unexpected error occurred.");
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else {
+        const apiErr = err as ApiError;
+        setApiError(apiErr?.message ?? "An unexpected error occurred.");
+      }
       setUploading(false);
       setSubmitting(false);
     }
@@ -306,14 +313,27 @@ export default function CreateReelPage() {
         </div>
 
         {/* API Error */}
-        {apiError && (
+        {usageLimitError ? (
+          <div className="p-4 rounded-xl bg-violet-950/50 border border-violet-800/50 text-violet-200">
+            <h3 className="font-semibold text-violet-400 mb-1">Usage Limit Reached</h3>
+            <p className="text-sm mb-3">
+              You&apos;ve used {usageLimitError.used} of {usageLimitError.limit} AI generations on your {usageLimitError.plan_key} plan.
+            </p>
+            <Link
+              href="/dashboard/billing"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium hover:bg-violet-500 transition-colors"
+            >
+              View Billing &amp; Plans &rarr;
+            </Link>
+          </div>
+        ) : apiError ? (
           <div
             id="api-error-banner"
             className="p-4 rounded-xl bg-red-950/50 border border-red-800/50 text-red-300 text-sm"
           >
             {apiError}
           </div>
-        )}
+        ) : null}
 
         {/* Submit */}
         <button

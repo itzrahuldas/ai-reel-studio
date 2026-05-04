@@ -4,7 +4,6 @@ Service for managing Reel publishing jobs to social platforms.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 import structlog
 from fastapi import HTTPException
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.security import decrypt_token
 from app.models.models import (
     AuditLog,
     MediaAsset,
@@ -26,7 +26,8 @@ from app.models.models import (
     UsageEventType,
     WorkspaceMember,
 )
-from app.services.usage_service import consume_usage
+from app.schemas.schemas import CreatePublishJobRequest, SchedulePublishJobRequest
+from app.services.usage_service import check_usage_limit, consume_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -37,12 +38,15 @@ def build_public_media_url(asset: MediaAsset) -> str:
     In live mode, it MUST be public HTTPS.
     In mock mode, local URLs or localhost are allowed.
     """
-    if asset.url:
+    asset_url = getattr(asset, "url", None)
+    if asset_url:
         # If it's an external URL (e.g. S3), use it directly
-        if asset.url.startswith("http://") and settings.INSTAGRAM_INTEGRATION_MODE == "live":
-            # Just a safety check; Meta requires HTTPS.
-            pass
-        return asset.url
+        if settings.INSTAGRAM_INTEGRATION_MODE == "live" and not asset_url.startswith("https://"):
+            raise HTTPException(
+                status_code=400,
+                detail="Live Instagram publishing requires a public HTTPS video URL.",
+            )
+        return asset_url
 
     # If storage is local, we must use STORAGE_PUBLIC_BASE_URL or API_PUBLIC_BASE_URL
     base = settings.STORAGE_PUBLIC_BASE_URL or settings.API_PUBLIC_BASE_URL
@@ -51,19 +55,24 @@ def build_public_media_url(asset: MediaAsset) -> str:
 
     url = f"{base.rstrip('/')}/api/v1/media-assets/{asset.id}/download"
 
-    if settings.INSTAGRAM_INTEGRATION_MODE == "live":
-        if "localhost" in url or "127.0.0.1" in url:
-            raise HTTPException(
-                status_code=400,
-                detail="Live Instagram publishing requires a public HTTPS video URL. "
-                       "Use deployed storage or a tunnel for development."
-            )
+    if (
+        settings.INSTAGRAM_INTEGRATION_MODE == "live"
+        and (not url.startswith("https://") or "localhost" in url or "127.0.0.1" in url)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Live Instagram publishing requires a public HTTPS video URL. "
+            "Use deployed storage or a tunnel for development.",
+        )
 
     return url
 
 
 async def validate_publish_preflight(
-    db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID, social_account_id: uuid.UUID
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    social_account_id: uuid.UUID,
 ) -> tuple[ReelProject, ReelVersion, SocialAccount, MediaAsset]:
     """
     Validate that the project and social account are ready for publishing.
@@ -115,14 +124,34 @@ async def validate_publish_preflight(
     # Check token expiry if provided
     if settings.INSTAGRAM_INTEGRATION_MODE == "live":
         if social_account.token_expires_at and social_account.token_expires_at < datetime.now(UTC):
-            raise HTTPException(status_code=400, detail="Instagram access token expired. Reconnect required.")
+            raise HTTPException(
+                status_code=400,
+                detail="Instagram access token expired. Reconnect required.",
+            )
         if not social_account.access_token_encrypted:
-            raise HTTPException(status_code=400, detail="Instagram access token missing. Reconnect required.")
+            raise HTTPException(
+                status_code=400,
+                detail="Instagram access token missing. Reconnect required.",
+            )
+        try:
+            decrypt_token(social_account.access_token_encrypted)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Instagram access token could not be decrypted. Reconnect required.",
+            ) from exc
 
     # 5. Check duplicate publish
     existing_job_stmt = select(PublishJob).where(
         PublishJob.project_id == project_id,
-        PublishJob.status.in_([PublishJobStatus.PUBLISHING, PublishJobStatus.QUEUED, PublishJobStatus.POLLING, PublishJobStatus.CONTAINER_CREATED])
+        PublishJob.status.in_(
+            [
+                PublishJobStatus.SCHEDULED,
+                PublishJobStatus.QUEUED,
+                PublishJobStatus.POLLING,
+                PublishJobStatus.CONTAINER_CREATED,
+            ]
+        ),
     )
     existing_job = (await db.execute(existing_job_stmt)).scalars().first()
     if existing_job:
@@ -135,7 +164,7 @@ async def create_publish_job(
     db: AsyncSession,
     user_id: uuid.UUID,
     project_id: uuid.UUID,
-    data: Any
+    data: CreatePublishJobRequest,
 ) -> tuple[PublishJob, ReelProject, ReelVersion]:
     """
     Create a new publish job and enqueue it immediately.
@@ -143,17 +172,6 @@ async def create_publish_job(
     """
     project, version, social_account, asset = await validate_publish_preflight(
         db, user_id, project_id, data.social_account_id
-    )
-
-    # Consume usage
-    await consume_usage(
-        db=db,
-        workspace_id=project.workspace_id,
-        user_id=user_id,
-        event_type=UsageEventType.PUBLISH,
-        quantity=1,
-        related_project_id=project.id,
-        related_version_id=version.id
     )
 
     # Use caption from request, fallback to version.caption
@@ -165,8 +183,8 @@ async def create_publish_job(
     if data.caption is None and version.hashtags:
         caption += "\n\n" + " ".join(f"#{tag}" for tag in version.hashtags)
 
-    # In live mode, validate URL first
-    _ = build_public_media_url(asset)
+    # In live mode, validate URL before billing usage is consumed.
+    video_url = build_public_media_url(asset)
 
     job = PublishJob(
         project_id=project.id,
@@ -178,10 +196,22 @@ async def create_publish_job(
             "caption": caption,
             "share_to_feed": data.share_to_feed,
             "allow_comments": data.allow_comments,
-            "video_url": build_public_media_url(asset)
+            "video_url": video_url,
         }
     )
     db.add(job)
+    await db.flush()
+
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.PUBLISH,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id,
+        related_job_id=str(job.id),
+    )
 
     project.status = ReelProjectStatus.PUBLISHING
     version.status = ReelProjectStatus.PUBLISHING
@@ -216,13 +246,18 @@ async def create_publish_job(
     else:
         # Sync mode — run publish pipeline inline in a background task
         import asyncio
+
         from app.services._publish_pipeline import run_publish_pipeline_inline
         asyncio.create_task(run_publish_pipeline_inline(str(job.id)))
 
     return job, project, version
 
 
-async def get_publish_jobs(db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID) -> list[PublishJob]:
+async def get_publish_jobs(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> list[PublishJob]:
     """Return publish jobs for a project."""
     stmt = (
         select(PublishJob)
@@ -279,6 +314,7 @@ async def retry_publish_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.U
             logger.warning("celery_publish_retry_enqueue_failed", error=str(e))
     else:
         import asyncio
+
         from app.services._publish_pipeline import run_publish_pipeline_inline
         asyncio.create_task(run_publish_pipeline_inline(str(job.id)))
 
@@ -288,34 +324,29 @@ async def schedule_publish_job(
     db: AsyncSession,
     user_id: uuid.UUID,
     project_id: uuid.UUID,
-    data: Any  # SchedulePublishJobRequest
+    data: SchedulePublishJobRequest,
 ) -> tuple[PublishJob, ReelProject, ReelVersion]:
     """
     Schedule a publish job for a future time.
     """
     from datetime import timedelta
-    
+
     project, version, social_account, asset = await validate_publish_preflight(
         db, user_id, project_id, data.social_account_id
     )
 
-    # Consume usage
-    await consume_usage(
-        db=db,
-        workspace_id=project.workspace_id,
-        user_id=user_id,
-        event_type=UsageEventType.SCHEDULED_PUBLISH,
-        quantity=1,
-        related_project_id=project.id,
-        related_version_id=version.id
-    )
-
     now = datetime.now(UTC)
     if data.scheduled_at < now + timedelta(minutes=2):
-        raise HTTPException(status_code=400, detail="Scheduled time must be at least 2 minutes in the future")
-        
+        raise HTTPException(
+            status_code=400,
+            detail="Scheduled time must be at least 2 minutes in the future",
+        )
+
     if data.scheduled_at > now + timedelta(days=90):
-        raise HTTPException(status_code=400, detail="Scheduled time cannot be more than 90 days in the future")
+        raise HTTPException(
+            status_code=400,
+            detail="Scheduled time cannot be more than 90 days in the future",
+        )
 
     caption = data.caption if data.caption is not None else version.caption
     if not caption:
@@ -324,7 +355,14 @@ async def schedule_publish_job(
     if data.caption is None and version.hashtags:
         caption += "\n\n" + " ".join(f"#{tag}" for tag in version.hashtags)
 
-    _ = build_public_media_url(asset)
+    video_url = build_public_media_url(asset)
+    await check_usage_limit(
+        db=db,
+        workspace_id=project.workspace_id,
+        event_type=UsageEventType.SCHEDULED_PUBLISH,
+        throw_if_exceeded=True,
+        quantity=1,
+    )
 
     job = PublishJob(
         project_id=project.id,
@@ -337,10 +375,24 @@ async def schedule_publish_job(
             "caption": caption,
             "share_to_feed": data.share_to_feed,
             "allow_comments": data.allow_comments,
-            "video_url": build_public_media_url(asset)
+            "video_url": video_url,
         }
     )
     db.add(job)
+    await db.flush()
+
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.SCHEDULED_PUBLISH,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id,
+        related_job_id=str(job.id),
+        metadata_json={"source": "schedule_created"},
+        enforce_limit=False,
+    )
 
     log = AuditLog(
         workspace_id=project.workspace_id,
@@ -388,4 +440,5 @@ async def cancel_scheduled_publish_job(
     job.cancel_reason = "Cancelled by user"
 
     await db.commit()
+
     return job

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Credits, Plans, and Usage Limits hardening with retry-safe usage events.
+- Usage idempotency indexes and publish job payload columns in migration `0007`.
+- Frontend usage-limit handling with billing CTAs for create, regenerate, render, publish, schedule, and editor render flows.
 - Production-grade monorepo scaffold (`ai-reel-studio/`)
 - Full documentation suite (PRODUCT_SPEC, ARCHITECTURE, SYSTEM_WORKFLOW, DATABASE_SCHEMA, API_REFERENCE, INSTAGRAM_INTEGRATION, AI_PIPELINE, VIDEO_RENDERING, SECURITY, DEPLOYMENT, ROADMAP)
 - Architecture Decision Records (ADR-0001, ADR-0002, ADR-0003)
@@ -29,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Alembic migration skeleton
 - Prompt templates (reel_planner.md, caption_generator.md, moderation.md)
 - CONTRIBUTING.md, SECURITY.md, LICENSE
+
+### Fixed
+- Enforced `PUBLISH` usage when scheduled publish jobs actually execute.
+- Made `consume_usage()` check idempotency before quota and use `used + quantity > limit`.
+- Moved publish URL validation and schedule time validation before usage writes.
+- Created default FREE subscriptions for additional workspace creation.
+- Added SQLAlchemy foreign-key disambiguation for workspace memberships.
 
 ---
 

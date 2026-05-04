@@ -19,6 +19,9 @@
 | `generation_jobs`   | AI content generation job tracking             |
 | `render_jobs`       | FFmpeg render job tracking                     |
 | `publish_jobs`      | Instagram publishing job tracking              |
+| `workspace_subscriptions` | Workspace plan and billing period state  |
+| `usage_counters`    | Monthly usage counters per workspace/period    |
+| `usage_events`      | Immutable usage audit and idempotency events   |
 | `audit_logs`        | Immutable event log for all sensitive actions  |
 
 ---
@@ -206,6 +209,58 @@
 | user_agent   | TEXT        | NULLABLE                                    |
 | metadata     | JSONB       | additional context (no PII, no secrets)     |
 | created_at   | TIMESTAMPTZ | NOT NULL — never updated                    |
+
+### `workspace_subscriptions`
+| Column                  | Type        | Notes                                  |
+|-------------------------|-------------|----------------------------------------|
+| id                      | UUID PK     |                                        |
+| workspace_id            | UUID FK     | unique workspace subscription row       |
+| plan_key                | VARCHAR(50) | `FREE`, `CREATOR`, or `PRO`             |
+| status                  | VARCHAR(50) | active/canceled/past_due/trialing       |
+| current_period_start    | TIMESTAMPTZ | monthly billing period start            |
+| current_period_end      | TIMESTAMPTZ | monthly billing period end              |
+| cancel_at_period_end    | BOOLEAN     | default false                           |
+| metadata_json           | JSONB       | provider metadata, no secrets           |
+| created_at              | TIMESTAMPTZ |                                        |
+| updated_at              | TIMESTAMPTZ |                                        |
+
+### `usage_counters`
+| Column                       | Type        | Notes                                  |
+|------------------------------|-------------|----------------------------------------|
+| id                           | UUID PK     |                                        |
+| workspace_id                 | UUID FK     | tenant scope                            |
+| period_start                 | TIMESTAMPTZ | monthly usage period start              |
+| period_end                   | TIMESTAMPTZ | monthly usage period end                |
+| ai_generations_used          | INTEGER     | consumed AI generation units            |
+| renders_used                 | INTEGER     | consumed render units                   |
+| publishes_used               | INTEGER     | consumed publish units                  |
+| scheduled_publishes_created  | INTEGER     | audit counter for schedule creations    |
+| created_at                   | TIMESTAMPTZ |                                        |
+| updated_at                   | TIMESTAMPTZ |                                        |
+
+Indexes:
+
+- `ix_usage_counters_workspace_period`
+- `uq_usage_counters_workspace_period` on `(workspace_id, period_start, period_end)` when existing data has no duplicates
+
+### `usage_events`
+| Column              | Type        | Notes                                  |
+|---------------------|-------------|----------------------------------------|
+| id                  | UUID PK     |                                        |
+| workspace_id         | UUID FK     | tenant scope                            |
+| user_id             | UUID FK     | nullable actor                          |
+| event_type          | VARCHAR(50) | `AI_GENERATION`, `RENDER`, `PUBLISH`, `SCHEDULED_PUBLISH` |
+| quantity            | INTEGER     | usage units consumed                    |
+| related_project_id  | UUID        | optional context                        |
+| related_version_id  | UUID        | optional context                        |
+| related_job_id      | VARCHAR     | retry/idempotency key                   |
+| metadata_json       | JSONB       | usage audit metadata                    |
+| created_at          | TIMESTAMPTZ | event creation time                     |
+
+Indexes:
+
+- `ix_usage_events_workspace_type_job`
+- partial `uq_usage_events_workspace_type_job` on `(workspace_id, event_type, related_job_id)` where `related_job_id IS NOT NULL` when existing data has no duplicates
 
 ---
 

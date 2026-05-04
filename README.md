@@ -44,6 +44,8 @@ Review Page: user approves or regenerates
 Publish Job: create IG media container → poll status → publish → store result
 ```
 
+Usage limits are enforced on create/generate, regenerate, render, publish now, schedule creation, and scheduled publish execution. Retries use the job ID as the usage idempotency key so the same job is not double-charged.
+
 ---
 
 ## 🛠 Tech Stack
@@ -129,6 +131,7 @@ cd apps/web && npm run typecheck    # run TypeScript check
 cd apps/api && ruff check .         # lint
 cd apps/api && ruff format .        # format
 cd apps/api && pytest               # run tests
+cd apps/api && pytest tests/unit/test_usage_service.py tests/unit/test_usage_enforcement.py --no-cov
 
 # Worker
 cd apps/worker && celery -A app.main worker --loglevel=info

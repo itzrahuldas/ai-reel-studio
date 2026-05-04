@@ -5,12 +5,11 @@ Tests are isolated with in-memory async SQLite and mock objects.
 Run with: pytest apps/api/tests/unit/test_usage_service.py -v
 """
 
-import pytest
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest_asyncio
+import pytest
 
 
 # ── Plan Definition Tests ─────────────────────────────────────────────────────
@@ -100,6 +99,7 @@ class TestPeriodBounds:
         dec_date = datetime(2025, 12, 15, tzinfo=UTC)
         with patch("app.services.usage_service.datetime") as mock_dt:
             mock_dt.now.return_value = dec_date
+            mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             start, end = get_current_period_bounds()
             assert start.month == 12
             assert end.month == 1
@@ -259,6 +259,41 @@ class TestCheckUsageLimit:
             assert exc_info.value.detail["limit"] == 3
 
     @pytest.mark.asyncio
+    async def test_blocks_when_used_plus_quantity_exceeds_limit(self):
+        from app.services.usage_service import check_usage_limit
+        from app.models.models import UsageEventType
+        from fastapi import HTTPException
+
+        workspace_id = uuid.uuid4()
+        db = AsyncMock()
+
+        with patch("app.services.usage_service.get_workspace_plan") as mock_plan, \
+             patch("app.services.usage_service.get_or_create_current_usage_counter") as mock_counter:
+
+            mock_plan_obj = MagicMock()
+            mock_plan_obj.ai_generations_per_month = 5
+            mock_plan_obj.key = MagicMock()
+            mock_plan_obj.key.value = "FREE"
+            mock_plan.return_value = mock_plan_obj
+
+            mock_counter_obj = MagicMock()
+            mock_counter_obj.ai_generations_used = 4
+            mock_counter.return_value = mock_counter_obj
+
+            with pytest.raises(HTTPException) as exc_info:
+                await check_usage_limit(
+                    db,
+                    workspace_id,
+                    UsageEventType.AI_GENERATION,
+                    throw_if_exceeded=True,
+                    quantity=2,
+                )
+
+            assert exc_info.value.status_code == 402
+            assert exc_info.value.detail["used"] == 4
+            assert exc_info.value.detail["limit"] == 5
+
+    @pytest.mark.asyncio
     async def test_publish_limit_enforcement(self):
         from app.services.usage_service import check_usage_limit
         from app.models.models import UsageEventType
@@ -314,12 +349,15 @@ class TestConsumeUsage:
             mock_check.return_value = True
             db.execute.return_value = mock_result
 
-            await consume_usage(
+            result = await consume_usage(
                 db, workspace_id, user_id, UsageEventType.RENDER,
                 related_job_id=job_id
             )
 
             # Should NOT add a new usage event or commit (idempotent)
+            assert result.already_consumed is True
+            mock_check.assert_not_called()
+            mock_counter.assert_not_called()
             db.add.assert_not_called()
 
     @pytest.mark.asyncio
@@ -332,6 +370,7 @@ class TestConsumeUsage:
         user_id = uuid.uuid4()
 
         db = AsyncMock()
+        db.add = MagicMock()
         mock_counter = MagicMock(spec=UsageCounter)
         mock_counter.renders_used = 0
 
@@ -341,14 +380,32 @@ class TestConsumeUsage:
             mock_check.return_value = True
             mock_get_counter.return_value = mock_counter
 
-            await consume_usage(
+            result = await consume_usage(
                 db, workspace_id, user_id, UsageEventType.RENDER,
                 related_job_id=None  # No job ID = no idempotency
             )
 
             # Should have called db.add (for the UsageEvent)
+            assert result.already_consumed is False
             db.add.assert_called()
             assert mock_counter.renders_used == 1
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_positive_quantity(self):
+        from app.services.usage_service import consume_usage
+        from app.models.models import UsageEventType
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await consume_usage(
+                AsyncMock(),
+                uuid.uuid4(),
+                uuid.uuid4(),
+                UsageEventType.RENDER,
+                quantity=0,
+            )
+
+        assert exc_info.value.status_code == 400
 
 
 # ── refund_usage Tests ────────────────────────────────────────────────────────

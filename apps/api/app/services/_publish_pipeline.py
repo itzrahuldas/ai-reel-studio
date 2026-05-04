@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
+from fastapi import HTTPException
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +39,9 @@ async def run_publish_pipeline_inline(job_id: str) -> None:
         ReelProject,
         ReelProjectStatus,
         ReelVersion,
+        UsageEventType,
     )
+    from app.services.usage_service import consume_usage
 
     async with AsyncSessionLocal() as db:
         try:
@@ -54,6 +57,48 @@ async def run_publish_pipeline_inline(job_id: str) -> None:
 
             project = await db.get(ReelProject, job.project_id)
             version = await db.get(ReelVersion, job.version_id)
+
+            if not project or not version:
+                job.status = PublishJobStatus.FAILED
+                job.error_message = "Missing related project or version"
+                await db.commit()
+                return
+
+            if job.scheduled_for:
+                try:
+                    await consume_usage(
+                        db=db,
+                        workspace_id=project.workspace_id,
+                        user_id=project.created_by,
+                        event_type=UsageEventType.PUBLISH,
+                        quantity=1,
+                        related_project_id=project.id,
+                        related_version_id=version.id,
+                        related_job_id=str(job.id),
+                        metadata_json={"source": "scheduled_publish_execution_inline"},
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != 402:
+                        raise
+                    detail = exc.detail if isinstance(exc.detail, dict) else {}
+                    job.status = PublishJobStatus.FAILED
+                    job.error_message = detail.get(
+                        "message",
+                        "Usage limit exceeded for scheduled publish.",
+                    )
+                    job.output_payload = {
+                        "error_code": "USAGE_LIMIT_EXCEEDED",
+                        "usage_limit": detail,
+                    }
+                    project.status = ReelProjectStatus.READY_TO_PUBLISH
+                    version.status = ReelProjectStatus.READY_TO_PUBLISH
+                    await db.commit()
+                    logger.warning(
+                        "publish_pipeline_inline_usage_limit",
+                        job_id=job_id,
+                        detail=detail,
+                    )
+                    return
 
             # Step 1: CONTAINER_CREATED
             job.status = PublishJobStatus.CONTAINER_CREATED

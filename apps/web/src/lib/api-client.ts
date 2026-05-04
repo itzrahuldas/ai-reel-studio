@@ -27,7 +27,9 @@ export type ReelProjectStatus =
   | "video_generating"
   | "audio_generating"
   | "rendering"
+  | "rendered"
   | "ready_for_review"
+  | "ready_to_publish"
   | "approved"
   | "publishing"
   | "ig_processing"
@@ -311,6 +313,20 @@ export interface UsageLimitError {
   limit: number;
   used: number;
   upgrade_required: boolean;
+  _isUsageLimitError?: true;
+}
+
+/** Type guard — check if a caught error is a usage-limit 402 error */
+export function isUsageLimitError(err: unknown): err is UsageLimitError {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (
+      (("_isUsageLimitError" in err) &&
+        (err as UsageLimitError)._isUsageLimitError === true) ||
+      (("code" in err) && (err as UsageLimitError).code === "USAGE_LIMIT_EXCEEDED")
+    )
+  );
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -339,12 +355,32 @@ class ApiClient {
     // Normalize error responses
     this.client.interceptors.response.use(
       (res) => res,
-      (error: AxiosError<{ error?: ApiError; detail?: string | unknown }>) => {
-        const apiError: ApiError = error.response?.data?.error ?? {
+      (error: AxiosError<{ error?: ApiError; detail?: string | unknown; code?: string }>) => {
+        const status = error.response?.status;
+        const payload = error.response?.data;
+        const detail = payload?.detail;
+        const usageLimitPayload =
+          detail && typeof detail === "object"
+            ? detail
+            : payload && typeof payload === "object" && payload.code === "USAGE_LIMIT_EXCEEDED"
+            ? payload
+            : null;
+
+        // 402: Usage limit exceeded — preserve the full detail object
+        if (
+          status === 402 &&
+          usageLimitPayload &&
+          "code" in usageLimitPayload &&
+          (usageLimitPayload as UsageLimitError).code === "USAGE_LIMIT_EXCEEDED"
+        ) {
+          return Promise.reject({ ...usageLimitPayload, _isUsageLimitError: true });
+        }
+
+        const apiError: ApiError = payload?.error ?? {
           code: "NETWORK_ERROR",
           message:
-            typeof error.response?.data?.detail === "string"
-              ? error.response.data.detail
+            typeof detail === "string"
+              ? detail
               : error.message,
           request_id: "unknown",
         };

@@ -8,8 +8,10 @@ import { apiClient } from "@/lib/api-client";
 import type { 
   ReelVersionEditorResponse, 
   StoryboardSceneInput, 
-  SubtitleLineInput 
+  SubtitleLineInput,
+  UsageLimitError
 } from "@/lib/api-client";
+import { isUsageLimitError } from "@/lib/api-client";
 
 
 
@@ -51,6 +53,7 @@ export default function EditorPage() {
   const [duration, setDuration] = useState<number>(30);
   
   const [isDirty, setIsDirty] = useState(false);
+  const [usageLimitError, setUsageLimitError] = useState<UsageLimitError | null>(null);
 
   // Initialize state from data
   useEffect(() => {
@@ -93,13 +96,18 @@ export default function EditorPage() {
       setIsDirty(false);
       alert("Draft saved successfully!");
     },
-    onError: (err: Error) => {
-      alert("Failed to save: " + (err.message || "Unknown error"));
+    onError: (err: unknown) => {
+      if (err instanceof Error) {
+        alert("Failed to save: " + (err.message || "Unknown error"));
+      } else {
+        alert("Failed to save.");
+      }
     }
   });
 
   const renderMutation = useMutation({
     mutationFn: async () => {
+      setUsageLimitError(null);
       if (!data) return;
       
       // Save first
@@ -124,8 +132,14 @@ export default function EditorPage() {
       setIsDirty(false);
       router.push(`/dashboard/reels/${id}`);
     },
-    onError: (err: Error) => {
-      alert("Failed to render: " + (err.message || "Unknown error"));
+    onError: (err: unknown) => {
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else if (err instanceof Error) {
+        alert("Failed to render: " + (err.message || "Unknown error"));
+      } else {
+        alert("Failed to render.");
+      }
     }
   });
 
@@ -218,6 +232,23 @@ export default function EditorPage() {
       {data.has_unrendered_edits && (
         <div className="mb-6 p-4 rounded-xl bg-blue-950/50 border border-blue-800/50 text-blue-300 text-sm">
           You have unsaved or unrendered edits. Render again before publishing.
+        </div>
+      )}
+
+      {usageLimitError && (
+        <div className="mb-6 p-4 rounded-xl bg-violet-950/50 border border-violet-800/50 text-violet-200 flex justify-between items-center gap-4">
+          <div>
+            <h3 className="font-semibold text-violet-400 mb-1">Usage Limit Reached</h3>
+            <p className="text-sm">
+              You&apos;ve used {usageLimitError.used} of {usageLimitError.limit} renders on your {usageLimitError.plan_key} plan.
+            </p>
+          </div>
+          <Link
+            href="/dashboard/billing"
+            className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-500 transition-colors shrink-0"
+          >
+            View Plans &rarr;
+          </Link>
         </div>
       )}
 
