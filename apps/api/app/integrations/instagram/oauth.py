@@ -3,7 +3,7 @@ Instagram OAuth and API client.
 
 IMPORTANT SAFETY RULES:
 - Never log access tokens
-- Never return access tokens in API responses  
+- Never return access tokens in API responses
 - Always validate CSRF state token before token exchange
 - Always check token expiry before publishing
 """
