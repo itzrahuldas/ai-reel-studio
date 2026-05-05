@@ -16,7 +16,7 @@ export default function LandingPage() {
           </h1>
           <p className="text-xl text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed">
             Give us your business idea + one image. We generate the script,
-            storyboard, voiceover, subtitles, and a vertical 9:16 video —
+            storyboard, voiceover, subtitles, and a vertical 9:16 video â€”
             ready to publish to Instagram.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -47,7 +47,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="text-center py-10 text-gray-600 text-sm border-t border-gray-900">
-        © {new Date().getFullYear()} AI Reel Studio. Built with Next.js 15 + FastAPI.
+        Â© {new Date().getFullYear()} AI Reel Studio. Built with Next.js 15 + FastAPI.
       </footer>
     </main>
   );

@@ -127,6 +127,18 @@ See [`.env.example`](./.env.example) for all required variables. Key groups:
 
 ---
 
+## Deployment Readiness
+
+Production and staging deployment steps are maintained in
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md). The current readiness report is
+[`docs/PRODUCTION_DEPLOYMENT_READINESS_REPORT.md`](./docs/PRODUCTION_DEPLOYMENT_READINESS_REPORT.md).
+
+The recommended runtime split is `web`, `api`, `worker-generation`,
+`worker-rendering`, `worker-publishing`, `celery-beat`, Postgres, Redis, and
+public HTTPS object storage for media assets.
+
+---
+
 ## 💻 Development Commands
 
 ```bash

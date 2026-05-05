@@ -6,9 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-# Forward import for UsageEventType — resolved at runtime to avoid circular deps
-# from app.models.models import UsageEventType  # noqa: E402 (resolved lazily below)
-
 # ── Base ─────────────────────────────────────────────────────────────────────
 
 class OrmBaseModel(BaseModel):

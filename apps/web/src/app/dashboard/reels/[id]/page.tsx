@@ -556,6 +556,7 @@ export default function ReelDetailPage() {
         <div className="space-y-4">
           {project.source_image_id && (
             <SectionCard title="Reference Image">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={API_BASE + "/static/uploads/" + project.source_image_id}
                 alt="Reference"

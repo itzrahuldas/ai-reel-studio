@@ -12,7 +12,6 @@ URL strategy:
   - Raw filesystem paths are NEVER exposed in responses.
 """
 
-import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -91,7 +90,7 @@ async def upload_media_asset(
     workspace_id = await _resolve_workspace(db, current_user.id)
 
     # ── Write to local storage ────────────────────────────────────────────────
-    ext = os.path.splitext(file.filename or "image")[1].lower() or ".jpg"
+    ext = Path(file.filename or "image.jpg").suffix.lower() or ".jpg"
     asset_id = uuid.uuid4()
     storage_filename = f"{asset_id}{ext}"
     file_path = UPLOAD_DIR / storage_filename
@@ -100,7 +99,7 @@ async def upload_media_asset(
         file_path.write_bytes(file_bytes)
     except OSError as e:
         logger.error("file_write_failed", path=str(file_path), error=str(e))
-        raise HTTPException(status_code=500, detail="File upload failed — storage error.")
+        raise HTTPException(status_code=500, detail="File upload failed — storage error.") from e
 
     # ── Create MediaAsset record ──────────────────────────────────────────────
     # s3_key stores the relative path; s3_bucket="local" is sentinel for local storage.

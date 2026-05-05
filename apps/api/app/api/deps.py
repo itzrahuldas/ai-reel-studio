@@ -40,7 +40,7 @@ async def get_current_user(
             raise credentials_exception
     except JWTError as e:
         logger.warning("invalid_token", error=str(e))
-        raise credentials_exception
+        raise credentials_exception from e
 
     user = await db.get(User, user_id)
     if user is None:

@@ -28,6 +28,7 @@ from app.schemas.schemas import (
     UpdateReelVersionRequest,
 )
 from app.services.ai.provider_factory import get_provider_status
+from app.services.editor_service import clone_reel_version, get_editor_data, update_reel_version
 from app.services.publish_service import create_publish_job, get_publish_jobs, retry_publish_job
 from app.services.reel_project import (
     create_reel_project,
@@ -155,8 +156,6 @@ async def list_render_jobs(
 
 
 # ── Editor ────────────────────────────────────────────────────────────────────
-
-from app.services.editor_service import clone_reel_version, get_editor_data, update_reel_version
 
 
 @router.get("/{project_id}/editor", response_model=ReelVersionEditorResponse)

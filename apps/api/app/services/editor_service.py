@@ -61,13 +61,11 @@ async def get_editor_data(
 
     # can publish if rendered and not edited since last render
     has_unrendered_edits = False
-    if version.rendered_asset_id:
-        if version.updated_at > version.created_at:  # simplified check
-            # Real logic: checking if updated_at > render job completed_at would be ideal,
-            # but since we create a new version when editing a published/rendered one,
-            # we can just assume it has unrendered edits if edit_metadata indicates changes after render
-            # Actually, let's use the status check or edit_metadata.
-            pass
+    if version.rendered_asset_id and version.updated_at > version.created_at:
+        # Real logic: checking if updated_at > render job completed_at would be ideal,
+        # but since we create a new version when editing a published/rendered one,
+        # we can just assume it has unrendered edits if edit_metadata indicates changes after render.
+        pass
 
     # A better check for unrendered edits is comparing version.status
     has_unrendered_edits = (version.status == ReelProjectStatus.DRAFT) and (version.rendered_asset_id is not None)

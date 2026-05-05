@@ -1,7 +1,7 @@
 # Security — AI Reel Studio
 
 **Version:** 0.1.0
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-05-05
 
 ---
 
@@ -43,6 +43,21 @@
   committed to the repository.
 - Phase 1 does not handle card data, Stripe Connect, or real AI video provider
   credentials.
+
+---
+
+## 1.3 Production Environment Hardening
+
+- `APP_ENV=production` disables interactive API docs and must not use mock-only routes.
+- `ALLOWED_ORIGINS` must be an exact allowlist for production frontend origins.
+- `.env`, `.env.*`, local media, generated audio/video, and build caches are ignored.
+- `.env.example` remains tracked and must contain placeholders only.
+- Mock Instagram, mock Stripe checkout completion, and development plan mutation
+  routes are blocked outside development/mock mode.
+- Public media URLs for Instagram publishing must be HTTPS and must not expose
+  raw filesystem paths.
+- CI uses fake test secrets only and runs Postgres/Redis-backed checks through
+  GitHub Actions services.
 
 ---
 

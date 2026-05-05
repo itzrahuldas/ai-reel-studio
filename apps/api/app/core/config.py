@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ────────────────────────────────────────────────────────────────
-    APP_ENV: Literal["development", "staging", "production"] = "development"
+    APP_ENV: Literal["development", "test", "staging", "production"] = "development"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
