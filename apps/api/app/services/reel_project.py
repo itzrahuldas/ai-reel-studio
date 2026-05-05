@@ -18,7 +18,6 @@ from app.models.models import (
     ReelProject,
     ReelProjectStatus,
     ReelVersion,
-    RenderJob,
     UsageEventType,
     WorkspaceMember,
 )
@@ -65,15 +64,6 @@ async def create_reel_project(
     inline (sync mode).
     """
     workspace_id = await get_user_workspace_id(db, user_id, data.workspace_id)
-    
-    # Check and consume AI generation usage limit before creating anything
-    await consume_usage(
-        db=db,
-        workspace_id=workspace_id,
-        user_id=user_id,
-        event_type=UsageEventType.AI_GENERATION,
-        quantity=1
-    )
 
     # ── 1. ReelProject ────────────────────────────────────────────────────────
     project = ReelProject(
@@ -112,6 +102,17 @@ async def create_reel_project(
     )
     db.add(job)
     await db.flush()
+
+    await consume_usage(
+        db=db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.AI_GENERATION,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id,
+        related_job_id=str(job.id),
+    )
 
     # ── 4. Audit Log ──────────────────────────────────────────────────────────
     audit = AuditLog(
@@ -268,16 +269,6 @@ async def regenerate_reel_project(
     """Create a new version + job and enqueue/run mock generation."""
     project = await get_project_by_id(db, user_id, project_id)
 
-    # Consume usage for regeneration
-    await consume_usage(
-        db=db,
-        workspace_id=project.workspace_id,
-        user_id=user_id,
-        event_type=UsageEventType.AI_GENERATION,
-        quantity=1,
-        related_project_id=project.id
-    )
-
     # Count existing versions
     stmt = select(ReelVersion).where(ReelVersion.project_id == project_id)
     existing = list((await db.execute(stmt)).scalars().all())
@@ -303,6 +294,17 @@ async def regenerate_reel_project(
     )
     db.add(job)
     await db.flush()
+
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.AI_GENERATION,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id,
+        related_job_id=str(job.id),
+    )
 
     audit = AuditLog(
         action="reel_project_regenerated",

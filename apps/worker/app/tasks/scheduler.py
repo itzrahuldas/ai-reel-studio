@@ -7,12 +7,12 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from celery import shared_task
-from sqlalchemy import select, update
+from sqlalchemy import select
 
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.models import PublishJob, PublishJobStatus
 from apps.worker.app.tasks.publish_reel import publish_reel_task
-from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -21,39 +21,40 @@ async def run_scan_scheduled_jobs() -> None:
     """Scan and enqueue scheduled publish jobs."""
     async with AsyncSessionLocal() as db:
         now = datetime.now(UTC)
-        
+
         # We need to find jobs that are SCHEDULED and their time is now or past
         # We also want to lock them.
-        
+
         # PostgreSQL SKIP LOCKED would be ideal, but for simplicity here
         # we'll use a basic update...returning query or two-step approach.
-        
+
         stmt = (
             select(PublishJob)
             .where(
                 PublishJob.status == PublishJobStatus.SCHEDULED,
                 PublishJob.scheduled_for <= now,
-                (PublishJob.locked_at == None) | (PublishJob.locked_at < now - timedelta(minutes=15))
+                PublishJob.locked_at.is_(None)
+                | (PublishJob.locked_at < now - timedelta(minutes=15)),
             )
             .limit(10)
         )
-        
+
         jobs = (await db.execute(stmt)).scalars().all()
-        
+
         for job in jobs:
             try:
                 # Lock the job
                 job.locked_at = now
                 job.execution_attempts += 1
                 await db.commit()
-                
+
                 # Check if we should enqueue
                 job.status = PublishJobStatus.QUEUED
                 job.queued_at = now
                 await db.commit()
-                
+
                 logger.info("scheduler.enqueueing_job", job_id=str(job.id))
-                
+
                 if settings.PUBLISH_MODE == "async":
                     task = publish_reel_task.delay(str(job.id))
                     job.celery_task_id = task.id
@@ -61,8 +62,8 @@ async def run_scan_scheduled_jobs() -> None:
                 else:
                     # Sync mode for local testing
                     from apps.worker.app.tasks.publish_reel import run_publish_pipeline
-                    asyncio.create_task(run_publish_pipeline(db, str(job.id)))
-                    
+                    await run_publish_pipeline(db, str(job.id))
+
             except Exception as e:
                 logger.exception("scheduler.failed_to_enqueue", job_id=str(job.id))
                 job.status = PublishJobStatus.FAILED

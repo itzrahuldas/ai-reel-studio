@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -28,7 +29,7 @@ from app.db.session import Base
 # ── Status Enums ────────────────────────────────────────────────────────────
 
 
-class ReelProjectStatus(str, enum.Enum):
+class ReelProjectStatus(enum.StrEnum):
     DRAFT = "draft"
     SCRIPT_GENERATING = "script_generating"
     SCRIPT_READY = "script_ready"
@@ -51,13 +52,13 @@ class ReelProjectStatus(str, enum.Enum):
     FAILED_INSTAGRAM_PUBLISH = "failed_instagram_publish"
 
 
-class SocialAccountStatus(str, enum.Enum):
+class SocialAccountStatus(enum.StrEnum):
     CONNECTED = "connected"
     RECONNECT_REQUIRED = "reconnect_required"
     ERROR = "error"
 
 
-class MediaAssetStatus(str, enum.Enum):
+class MediaAssetStatus(enum.StrEnum):
     PENDING_UPLOAD = "pending_upload"
     UPLOADED = "uploaded"
     PROCESSING = "processing"
@@ -65,7 +66,7 @@ class MediaAssetStatus(str, enum.Enum):
     ERROR = "error"
 
 
-class MediaAssetType(str, enum.Enum):
+class MediaAssetType(enum.StrEnum):
     SOURCE_IMAGE = "source_image"
     RAW_VIDEO = "raw_video"
     AUDIO = "audio"
@@ -73,14 +74,14 @@ class MediaAssetType(str, enum.Enum):
     THUMBNAIL = "thumbnail"
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(enum.StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"
 
 
-class PublishJobStatus(str, enum.Enum):
+class PublishJobStatus(enum.StrEnum):
     SCHEDULED = "scheduled"
     QUEUED = "queued"
     CONTAINER_CREATED = "container_created"
@@ -91,27 +92,30 @@ class PublishJobStatus(str, enum.Enum):
     RECONNECT_REQUIRED = "reconnect_required"
 
 
-class WorkspacePlan(str, enum.Enum):
+class WorkspacePlan(enum.StrEnum):
     FREE = "free"
     PRO = "pro"
     AGENCY = "agency"
 
 
-class WorkspaceMemberRole(str, enum.Enum):
+class WorkspaceMemberRole(enum.StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
     MEMBER = "member"
     VIEWER = "viewer"
 
 
-class SubscriptionStatus(str, enum.Enum):
+class SubscriptionStatus(enum.StrEnum):
     ACTIVE = "active"
     CANCELED = "canceled"
     PAST_DUE = "past_due"
     TRIALING = "trialing"
+    UNPAID = "unpaid"
+    INCOMPLETE = "incomplete"
+    INCOMPLETE_EXPIRED = "incomplete_expired"
 
 
-class UsageEventType(str, enum.Enum):
+class UsageEventType(enum.StrEnum):
     AI_GENERATION = "AI_GENERATION"
     RENDER = "RENDER"
     PUBLISH = "PUBLISH"
@@ -149,7 +153,10 @@ class User(TimestampMixin, Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
-    workspace_memberships: Mapped[list["WorkspaceMember"]] = relationship(back_populates="user")
+    workspace_memberships: Mapped[list["WorkspaceMember"]] = relationship(
+        back_populates="user",
+        foreign_keys="WorkspaceMember.user_id",
+    )
     owned_workspaces: Mapped[list["Workspace"]] = relationship(back_populates="owner")
 
 
@@ -361,6 +368,8 @@ class PublishJob(TimestampMixin, Base):
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     execution_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    input_payload: Mapped[dict | None] = mapped_column(JSONB)
+    output_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     # Relationships
     project: Mapped["ReelProject"] = relationship(back_populates="publish_jobs")
@@ -375,6 +384,11 @@ class WorkspaceSubscription(TimestampMixin, Base):
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, unique=True)
     plan_key: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), default="manual", nullable=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), index=True)
     current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -384,14 +398,29 @@ class WorkspaceSubscription(TimestampMixin, Base):
     workspace: Mapped["Workspace"] = relationship(back_populates="subscription")
 
 
+class StripeWebhookEvent(TimestampMixin, Base):
+    __tablename__ = "stripe_webhook_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    stripe_event_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    processing_status: Mapped[str] = mapped_column(String(50), default="processing", nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    payload_json: Mapped[dict | None] = mapped_column(JSONB)
+
+
 class UsageCounter(TimestampMixin, Base):
     __tablename__ = "usage_counters"
+    __table_args__ = (
+        Index("ix_usage_counters_workspace_period", "workspace_id", "period_start", "period_end"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    
+
     ai_generations_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     renders_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     publishes_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -403,18 +432,21 @@ class UsageCounter(TimestampMixin, Base):
 
 class UsageEvent(TimestampMixin, Base):
     __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("ix_usage_events_workspace_type_job", "workspace_id", "event_type", "related_job_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     event_type: Mapped[UsageEventType] = mapped_column(Enum(UsageEventType), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    
+
     # Context references
     related_project_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     related_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     related_job_id: Mapped[str | None] = mapped_column(String(255)) # string for flexibility if we use worker UUIDs
-    
+
     metadata_json: Mapped[dict | None] = mapped_column(JSONB)
 
     # Relationships

@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 .next/
+*.tsbuildinfo
 .env
 .env.local
 __pycache__/

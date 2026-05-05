@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import type { ReelProject, ReelVersion, GenerationJob, RenderJob, PublishJob } from "@/lib/api-client";
+import type { ReelProject, ReelVersion, GenerationJob, RenderJob, PublishJob, UsageLimitError } from "@/lib/api-client";
+import { isUsageLimitError } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -219,6 +220,10 @@ export default function ReelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [scheduleAccountId, setScheduleAccountId] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [usageLimitError, setUsageLimitError] = useState<UsageLimitError | null>(null);
 
   useEffect(() => {
     if (!localStorage.getItem("access_token")) {
@@ -245,10 +250,20 @@ export default function ReelDetailPage() {
   });
 
   const regenerateMutation = useMutation({
-    mutationFn: () => apiClient.regenerateReelProject(id),
+    mutationFn: async () => {
+      setUsageLimitError(null);
+      return apiClient.regenerateReelProject(id);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
       queryClient.invalidateQueries({ queryKey: ["reel-project-jobs", id] });
+    },
+    onError: (err: unknown) => {
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else if (err instanceof Error) {
+        alert("Failed to regenerate: " + err.message);
+      }
     },
   });
 
@@ -288,29 +303,58 @@ export default function ReelDetailPage() {
   });
 
   const renderMutation = useMutation({
-    mutationFn: () => apiClient.renderReelProject(id),
+    mutationFn: async () => {
+      setUsageLimitError(null);
+      return apiClient.renderReelProject(id);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
       queryClient.invalidateQueries({ queryKey: ["reel-project-render-jobs", id] });
     },
+    onError: (err: unknown) => {
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else if (err instanceof Error) {
+        alert("Failed to render: " + err.message);
+      }
+    }
   });
 
   const publishMutation = useMutation({
-    mutationFn: (social_account_id: string) => apiClient.publishReelProject(id, { social_account_id }),
+    mutationFn: async (social_account_id: string) => {
+      setUsageLimitError(null);
+      return apiClient.publishReelProject(id, { social_account_id });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
       queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
     },
+    onError: (err: unknown) => {
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else if (err instanceof Error) {
+        alert("Failed to publish: " + err.message);
+      }
+    }
   });
 
   const scheduleMutation = useMutation({
-    mutationFn: (data: { social_account_id: string; scheduled_at: string; schedule_timezone: string }) => 
-      apiClient.scheduleReelProject(id, data),
+    mutationFn: async (data: { social_account_id: string; scheduled_at: string; schedule_timezone: string }) => {
+      setUsageLimitError(null);
+      return apiClient.scheduleReelProject(id, data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reel-project", id] });
       queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
       setScheduleAccountId(null); // close form
     },
+    onError: (err: unknown) => {
+      if (isUsageLimitError(err)) {
+        setUsageLimitError(err);
+      } else if (err instanceof Error) {
+        alert("Failed to schedule: " + err.message);
+      }
+    }
   });
 
   const cancelScheduleMutation = useMutation({
@@ -327,10 +371,6 @@ export default function ReelDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["reel-project-publish-jobs", id] });
     },
   });
-
-  const [scheduleAccountId, setScheduleAccountId] = useState<string | null>(null);
-  const [scheduleDate, setScheduleDate] = useState("");
-  const [scheduleTime, setScheduleTime] = useState("");
 
   if (isLoading) {
     return (
@@ -365,6 +405,23 @@ export default function ReelDetailPage() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
+      {usageLimitError && (
+        <div className="mb-6 p-4 rounded-xl bg-violet-950/50 border border-violet-800/50 text-violet-200 flex justify-between items-center gap-4">
+          <div>
+            <h3 className="font-semibold text-violet-400 mb-1">Usage Limit Reached</h3>
+            <p className="text-sm">
+              You&apos;ve used {usageLimitError.used} of {usageLimitError.limit} for this action on your {usageLimitError.plan_key} plan.
+            </p>
+          </div>
+          <Link
+            href="/dashboard/billing"
+            className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-500 transition-colors shrink-0"
+          >
+            View Plans &rarr;
+          </Link>
+        </div>
+      )}
+
       <div className="flex items-start justify-between mb-6 gap-4">
         <div>
           <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-300 mb-2 block">

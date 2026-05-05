@@ -1,19 +1,31 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
 from fastapi import HTTPException
-from sqlalchemy import select, and_, func
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
-    WorkspaceSubscription,
+    PublishJob,
+    PublishJobStatus,
+    ReelProject,
+    SubscriptionStatus,
     UsageCounter,
     UsageEvent,
     UsageEventType,
-    SubscriptionStatus,
-    PublishJob,
-    PublishJobStatus,
+    WorkspaceSubscription,
 )
-from app.schemas.schemas import PlanDefinition, PlanKey
+from app.schemas.schemas import PlanDefinition, PlanKey, UsageSummaryResponse
+
+
+@dataclass(frozen=True)
+class UsageConsumeResult:
+    """Result returned by consume_usage for retry-safe callers."""
+
+    already_consumed: bool
+    event: UsageEvent | None = None
+
 
 # Static Plan Definitions
 PLANS = {
@@ -46,31 +58,72 @@ PLANS = {
     ),
 }
 
+PAID_SUBSCRIPTION_STATUSES = {SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING}
+
+
+def get_effective_plan_key(subscription: WorkspaceSubscription | None) -> PlanKey:
+    if not subscription:
+        return PlanKey.FREE
+
+    try:
+        plan_key = PlanKey(subscription.plan_key)
+    except ValueError:
+        return PlanKey.FREE
+
+    if plan_key == PlanKey.FREE:
+        return PlanKey.FREE
+    if subscription.status in PAID_SUBSCRIPTION_STATUSES:
+        return plan_key
+    return PlanKey.FREE
+
+
 def get_current_period_bounds() -> tuple[datetime, datetime]:
     # For now, simplistic monthly periods from the start of the current month
-    now = datetime.now(timezone.utc)
-    start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    now = datetime.now(UTC)
+    start = datetime(now.year, now.month, 1, tzinfo=UTC)
     # Next month start (handle December rollover)
     if now.month == 12:
-        end = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+        end = datetime(now.year + 1, 1, 1, tzinfo=UTC)
     else:
-        end = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+        end = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
     return start, end
 
 async def get_workspace_plan(db: AsyncSession, workspace_id: uuid.UUID) -> PlanDefinition:
     stmt = select(WorkspaceSubscription).where(
-        WorkspaceSubscription.workspace_id == workspace_id,
-        WorkspaceSubscription.status == SubscriptionStatus.ACTIVE
+        WorkspaceSubscription.workspace_id == workspace_id
     )
     result = await db.execute(stmt)
     sub = result.scalar_one_or_none()
-    
-    plan_key = PlanKey(sub.plan_key) if sub else PlanKey.FREE
+
+    plan_key = get_effective_plan_key(sub)
     return PLANS[plan_key]
 
-async def get_or_create_current_usage_counter(db: AsyncSession, workspace_id: uuid.UUID) -> UsageCounter:
-    start, end = get_current_period_bounds()
-    
+
+async def get_workspace_usage_period_bounds(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> tuple[datetime, datetime]:
+    stmt = select(WorkspaceSubscription).where(
+        WorkspaceSubscription.workspace_id == workspace_id
+    )
+    result = await db.execute(stmt)
+    subscription = result.scalar_one_or_none()
+    if (
+        subscription
+        and subscription.status in PAID_SUBSCRIPTION_STATUSES
+        and subscription.current_period_start
+        and subscription.current_period_end
+    ):
+        return subscription.current_period_start, subscription.current_period_end
+
+    return get_current_period_bounds()
+
+async def get_or_create_current_usage_counter(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> UsageCounter:
+    start, end = await get_workspace_usage_period_bounds(db, workspace_id)
+
     stmt = select(UsageCounter).where(
         UsageCounter.workspace_id == workspace_id,
         UsageCounter.period_start == start,
@@ -78,7 +131,7 @@ async def get_or_create_current_usage_counter(db: AsyncSession, workspace_id: uu
     )
     result = await db.execute(stmt)
     counter = result.scalar_one_or_none()
-    
+
     if not counter:
         counter = UsageCounter(
             workspace_id=workspace_id,
@@ -86,33 +139,53 @@ async def get_or_create_current_usage_counter(db: AsyncSession, workspace_id: uu
             period_end=end,
         )
         db.add(counter)
-        await db.commit()
-        await db.refresh(counter)
-        
+        await db.flush()
+
     return counter
 
 async def count_active_scheduled_jobs(db: AsyncSession, workspace_id: uuid.UUID) -> int:
-    stmt = select(func.count(PublishJob.id)).join(PublishJob.project).where(
-        PublishJob.status == PublishJobStatus.SCHEDULED,
-        # Accessing project.workspace_id
-        # Wait, the models.py defines PublishJob.project -> ReelProject, which has workspace_id
-    )
-    from app.models.models import ReelProject
-    stmt = select(func.count(PublishJob.id)).join(ReelProject, PublishJob.project_id == ReelProject.id).where(
-        PublishJob.status == PublishJobStatus.SCHEDULED,
-        ReelProject.workspace_id == workspace_id
+    stmt = select(func.count(PublishJob.id)).join(
+        ReelProject,
+        PublishJob.project_id == ReelProject.id,
+    ).where(
+        ReelProject.workspace_id == workspace_id,
+        or_(
+            PublishJob.status == PublishJobStatus.SCHEDULED,
+            and_(
+                PublishJob.status == PublishJobStatus.QUEUED,
+                PublishJob.scheduled_for.is_not(None),
+                PublishJob.started_at.is_(None),
+            ),
+        ),
     )
     result = await db.execute(stmt)
     return result.scalar_one() or 0
 
-async def get_usage_summary(db: AsyncSession, workspace_id: uuid.UUID):
+
+async def get_usage_summary(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> UsageSummaryResponse:
     plan = await get_workspace_plan(db, workspace_id)
     counter = await get_or_create_current_usage_counter(db, workspace_id)
     active_schedules = await count_active_scheduled_jobs(db, workspace_id)
-    
-    from app.schemas.schemas import UsageSummaryResponse
+    from app.services.stripe_service import build_plan_response, get_billing_status
+
+    billing_status = await get_billing_status(db, workspace_id)
+    plan_response = PlanDefinition.model_validate(build_plan_response(plan.key))
+
     return UsageSummaryResponse(
-        plan=plan,
+        plan=plan_response,
+        current_plan=billing_status["current_plan"],
+        subscription_plan_key=billing_status["subscription_plan_key"],
+        subscription_status=billing_status["subscription_status"],
+        provider=billing_status["provider"],
+        current_period_start=billing_status["current_period_start"] or counter.period_start,
+        current_period_end=billing_status["current_period_end"] or counter.period_end,
+        cancel_at_period_end=billing_status["cancel_at_period_end"],
+        billing_portal_available=billing_status["billing_portal_available"],
+        upgrade_available=billing_status["upgrade_available"],
+        stripe_mode=billing_status["stripe_mode"],
         period_start=counter.period_start,
         period_end=counter.period_end,
         ai_generations_used=counter.ai_generations_used,
@@ -125,14 +198,23 @@ async def get_usage_summary(db: AsyncSession, workspace_id: uuid.UUID):
         scheduled_publishes_limit=plan.scheduled_publishes_limit
     )
 
-async def check_usage_limit(db: AsyncSession, workspace_id: uuid.UUID, event_type: UsageEventType, throw_if_exceeded: bool = True) -> bool:
+async def check_usage_limit(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    event_type: UsageEventType,
+    throw_if_exceeded: bool = True,
+    quantity: int = 1,
+) -> bool:
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Usage quantity must be greater than zero")
+
     plan = await get_workspace_plan(db, workspace_id)
     counter = await get_or_create_current_usage_counter(db, workspace_id)
-    
+
     used = 0
     limit = 0
     message = ""
-    
+
     if event_type == UsageEventType.AI_GENERATION:
         used = counter.ai_generations_used
         limit = plan.ai_generations_per_month
@@ -149,9 +231,11 @@ async def check_usage_limit(db: AsyncSession, workspace_id: uuid.UUID, event_typ
         used = await count_active_scheduled_jobs(db, workspace_id)
         limit = plan.scheduled_publishes_limit
         message = "You have reached your active scheduled publish limit."
-        
-    exceeded = used >= limit
-    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported usage event type: {event_type}")
+
+    exceeded = used + quantity > limit
+
     if exceeded and throw_if_exceeded:
         raise HTTPException(status_code=402, detail={
             "code": "USAGE_LIMIT_EXCEEDED",
@@ -161,7 +245,7 @@ async def check_usage_limit(db: AsyncSession, workspace_id: uuid.UUID, event_typ
             "used": used,
             "upgrade_required": True
         })
-        
+
     return not exceeded
 
 async def consume_usage(
@@ -172,11 +256,13 @@ async def consume_usage(
     related_project_id: uuid.UUID | None = None,
     related_version_id: uuid.UUID | None = None,
     related_job_id: str | None = None,
-    quantity: int = 1
-):
-    # Check limit first
-    await check_usage_limit(db, workspace_id, event_type, throw_if_exceeded=True)
-    
+    quantity: int = 1,
+    metadata_json: dict | None = None,
+    enforce_limit: bool = True,
+) -> UsageConsumeResult:
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Usage quantity must be greater than zero")
+
     # Optional idempotency via related_job_id
     if related_job_id:
         stmt = select(UsageEvent).where(
@@ -185,9 +271,19 @@ async def consume_usage(
             UsageEvent.related_job_id == related_job_id
         )
         result = await db.execute(stmt)
-        if result.scalar_one_or_none():
-            return # Already consumed
-            
+        existing_event = result.scalar_one_or_none()
+        if existing_event:
+            return UsageConsumeResult(already_consumed=True, event=existing_event)
+
+    if enforce_limit:
+        await check_usage_limit(
+            db,
+            workspace_id,
+            event_type,
+            throw_if_exceeded=True,
+            quantity=quantity,
+        )
+
     # Add usage event
     event = UsageEvent(
         workspace_id=workspace_id,
@@ -196,10 +292,11 @@ async def consume_usage(
         quantity=quantity,
         related_project_id=related_project_id,
         related_version_id=related_version_id,
-        related_job_id=related_job_id
+        related_job_id=related_job_id,
+        metadata_json=metadata_json,
     )
     db.add(event)
-    
+
     # Update counter
     counter = await get_or_create_current_usage_counter(db, workspace_id)
     if event_type == UsageEventType.AI_GENERATION:
@@ -210,8 +307,9 @@ async def consume_usage(
         counter.publishes_used += quantity
     elif event_type == UsageEventType.SCHEDULED_PUBLISH:
         counter.scheduled_publishes_created += quantity
-        
+
     await db.commit()
+    return UsageConsumeResult(already_consumed=False, event=event)
 
 
 async def refund_usage(

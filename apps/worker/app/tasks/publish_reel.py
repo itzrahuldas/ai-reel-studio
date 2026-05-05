@@ -9,6 +9,7 @@ import uuid
 
 import structlog
 from celery import shared_task
+from fastapi import HTTPException
 
 from app.core.config import settings
 from app.core.security import decrypt_token
@@ -27,9 +28,48 @@ from app.models.models import (
     ReelVersion,
     SocialAccount,
     SocialAccountStatus,
+    UsageEventType,
 )
+from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
+
+
+async def _consume_scheduled_publish_usage(db, job, project, version, social_account) -> bool:
+    """Consume monthly publish quota when a scheduled publish actually starts."""
+    if not job.scheduled_for:
+        return True
+
+    try:
+        await consume_usage(
+            db=db,
+            workspace_id=project.workspace_id,
+            user_id=social_account.connected_by_user_id or project.created_by,
+            event_type=UsageEventType.PUBLISH,
+            quantity=1,
+            related_project_id=project.id,
+            related_version_id=version.id,
+            related_job_id=str(job.id),
+            metadata_json={"source": "scheduled_publish_execution"},
+        )
+    except HTTPException as exc:
+        if exc.status_code != 402:
+            raise
+
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        job.status = PublishJobStatus.FAILED
+        job.error_message = detail.get("message", "Usage limit exceeded for scheduled publish.")
+        job.output_payload = {
+            "error_code": "USAGE_LIMIT_EXCEEDED",
+            "usage_limit": detail,
+        }
+        project.status = ReelProjectStatus.READY_TO_PUBLISH
+        version.status = ReelProjectStatus.READY_TO_PUBLISH
+        await db.commit()
+        logger.warning("publish.usage_limit_exceeded", job_id=str(job.id), detail=detail)
+        return False
+
+    return True
 
 
 async def run_publish_pipeline(db, publish_job_id: str) -> None:
@@ -56,6 +96,9 @@ async def run_publish_pipeline(db, publish_job_id: str) -> None:
         job.status = PublishJobStatus.FAILED
         job.error_message = "Missing related project, version, or social account"
         await db.commit()
+        return
+
+    if not await _consume_scheduled_publish_usage(db, job, project, version, social_account):
         return
 
     # Start validation
@@ -151,9 +194,9 @@ async def run_publish_pipeline(db, publish_job_id: str) -> None:
             workspace_id=project.workspace_id,
             user_id=social_account.connected_by_user_id,
             action="publish_job_completed",
-            entity_type="publish_job",
-            entity_id=job.id,
-            details={"media_id": media_id}
+            resource_type="publish_job",
+            resource_id=job.id,
+            metadata_={"media_id": media_id},
         )
         db.add(log)
         
@@ -173,9 +216,9 @@ async def run_publish_pipeline(db, publish_job_id: str) -> None:
             workspace_id=project.workspace_id,
             user_id=social_account.connected_by_user_id,
             action="publish_failed_token",
-            entity_type="publish_job",
-            entity_id=job.id,
-            details={"error": str(e)}
+            resource_type="publish_job",
+            resource_id=job.id,
+            metadata_={"error": str(e)},
         )
         db.add(log)
         await db.commit()
@@ -191,9 +234,9 @@ async def run_publish_pipeline(db, publish_job_id: str) -> None:
             workspace_id=project.workspace_id,
             user_id=social_account.connected_by_user_id,
             action="publish_failed",
-            entity_type="publish_job",
-            entity_id=job.id,
-            details={"error": str(e), "traceback": traceback.format_exc()}
+            resource_type="publish_job",
+            resource_id=job.id,
+            metadata_={"error": str(e), "traceback": traceback.format_exc()},
         )
         db.add(log)
         await db.commit()
@@ -211,4 +254,3 @@ def publish_reel_task(self, publish_job_id: str) -> str:
     asyncio.run(_run())
     logger.info("celery.publish_reel_task.finished", job_id=publish_job_id)
     return publish_job_id
-

@@ -24,14 +24,13 @@ from app.models.models import (
     ReelProjectStatus,
     ReelVersion,
     RenderJob,
-    WorkspaceMember,
     UsageEventType,
+    WorkspaceMember,
 )
-from app.services.usage_service import consume_usage
-
 from app.services.ai.base import SubtitleLine
 from app.services.rendering.ffmpeg_renderer import FFmpegRenderer, RenderParams
 from app.services.rendering.subtitles import write_srt_file
+from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -102,16 +101,6 @@ async def create_render_job(
         )
 
     # ── Consume Usage ────────────────────────────────────────────────────────
-    await consume_usage(
-        db=db,
-        workspace_id=project.workspace_id,
-        user_id=user_id,
-        event_type=UsageEventType.RENDER,
-        quantity=1,
-        related_project_id=project.id,
-        related_version_id=version.id
-    )
-
     # ── Create RenderJob ──────────────────────────────────────────────────────
     render_job = RenderJob(
         project_id=project.id,
@@ -127,6 +116,17 @@ async def create_render_job(
     )
     db.add(render_job)
     await db.flush()
+
+    await consume_usage(
+        db=db,
+        workspace_id=project.workspace_id,
+        user_id=user_id,
+        event_type=UsageEventType.RENDER,
+        quantity=1,
+        related_project_id=project.id,
+        related_version_id=version.id,
+        related_job_id=str(render_job.id),
+    )
 
     audit = AuditLog(
         action="render_job_created",
@@ -276,13 +276,18 @@ async def _run_render_pipeline_inline(
             duration = project.duration_seconds
             cta_text = project.cta_text
             if version.render_settings:
-                if "duration_seconds" in version.render_settings and version.render_settings["duration_seconds"] is not None:
+                if (
+                    "duration_seconds" in version.render_settings
+                    and version.render_settings["duration_seconds"] is not None
+                ):
                     duration = version.render_settings["duration_seconds"]
-                if "cta_position" in version.render_settings and version.render_settings["cta_position"] is not None:
+                if (
+                    "cta_position" in version.render_settings
+                    and version.render_settings["cta_position"] is not None
+                ):
                     # In phase 1, we just respect the text override or position flag conceptually,
-                    # but cta_text itself might be edited via updateReelVersion which currently doesn't
-                    # update project.cta_text. We should use version.caption/hook for content, but cta is in project.
-                    # Actually we didn't add cta_text to UpdateReelVersionRequest. Let's just use project.cta_text for now.
+                    # but cta_text itself might be edited via updateReelVersion,
+                    # which currently does not update project.cta_text.
                     pass
 
             params = RenderParams(
@@ -320,7 +325,9 @@ async def _run_render_pipeline_inline(
             await db.flush()
 
             # ── Create MediaAsset for thumbnail ───────────────────────────────
-            thumb_size = result.thumbnail_path.stat().st_size if result.thumbnail_path.exists() else 0
+            thumb_size = (
+                result.thumbnail_path.stat().st_size if result.thumbnail_path.exists() else 0
+            )
             thumb_asset = MediaAsset(
                 workspace_id=project.workspace_id,
                 project_id=project.id,
@@ -368,7 +375,11 @@ async def _run_render_pipeline_inline(
             db.add(audit)
             await db.commit()
 
-            logger.info("render_pipeline_complete", project_id=str(project_id), renderer=result.renderer)
+            logger.info(
+                "render_pipeline_complete",
+                project_id=str(project_id),
+                renderer=result.renderer,
+            )
 
         except Exception as exc:
             logger.exception("render_pipeline_error", project_id=str(project_id), error=str(exc))
@@ -400,7 +411,7 @@ async def _run_render_pipeline_inline(
 
 def _get_source_image_path(
     project: ReelProject,
-    version: ReelVersion,
+    _version: ReelVersion,
     storage_root: str,
 ) -> Path:
     """

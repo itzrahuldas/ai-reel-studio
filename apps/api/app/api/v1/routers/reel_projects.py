@@ -12,11 +12,10 @@ from fastapi import APIRouter
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.schemas import (
     CreatePublishJobRequest,
+    CreatePublishJobResponse,
     CreateReelProjectRequest,
     CreateReelProjectResponse,
     CreateRenderJobResponse,
-    CreatePublishJobResponse,
-    SchedulePublishJobRequest,
     GenerationJobResponse,
     PublishJobResponse,
     ReelProjectResponse,
@@ -24,6 +23,7 @@ from app.schemas.schemas import (
     ReelVersionResponse,
     RenderJobResponse,
     SaveEditorDraftResponse,
+    SchedulePublishJobRequest,
     UpdateReelVersionRequest,
 )
 from app.services.publish_service import create_publish_job, get_publish_jobs, retry_publish_job

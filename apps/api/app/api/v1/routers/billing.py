@@ -10,49 +10,79 @@ Endpoints:
   POST /api/v1/billing/dev/grant-usage — grant artificial usage (for testing limits)
 """
 
-import uuid
 from datetime import UTC, datetime
-from typing import Any
+from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import settings
 from app.models.models import (
     SubscriptionStatus,
     UsageEventType,
-    WorkspaceSubscription,
     WorkspaceMember,
+    WorkspaceSubscription,
 )
 from app.schemas.schemas import (
+    CheckoutRequest,
+    CheckoutResponse,
+    GrantDevUsageRequest,
+    MockCheckoutCompleteRequest,
     PlanDefinition,
     PlanKey,
+    PortalResponse,
     SetDevPlanRequest,
-    GrantDevUsageRequest,
     UsageSummaryResponse,
 )
+from app.services import stripe_service
+from app.services.stripe_service import BillingForbiddenError, BillingSetupError
 from app.services.usage_service import (
     PLANS,
-    consume_usage,
     get_usage_summary,
-    get_workspace_plan,
 )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+async def _resolve_workspace_id(db: DbSession, current_user: CurrentUser) -> UUID:
+    from sqlalchemy import select
+
+    stmt = select(WorkspaceMember.workspace_id).where(
+        WorkspaceMember.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    workspace_id = result.scalars().first()
+    if not workspace_id:
+        raise HTTPException(
+            status_code=400,
+            detail="User has no workspace. Please complete onboarding.",
+        )
+    return workspace_id
+
+
+def _parse_paid_plan_or_400(raw_plan_key: str) -> PlanKey:
+    try:
+        plan_key = stripe_service.parse_plan_key(raw_plan_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unsupported billing plan.") from None
+
+    if plan_key == PlanKey.FREE:
+        raise HTTPException(status_code=400, detail="FREE plan does not require Checkout.")
+    return plan_key
+
+
 # ── Plan Definitions (public) ─────────────────────────────────────────────────
 
 @router.get("/plans", response_model=list[PlanDefinition])
-async def list_plans() -> Any:
+async def list_plans() -> list[dict[str, object]]:
     """
     Return all available billing plan definitions.
     This endpoint is public — no auth required.
     Useful for pricing pages and upgrade modals.
     """
-    return list(PLANS.values())
+    return [stripe_service.build_plan_response(plan_key) for plan_key in PLANS]
 
 
 # ── Usage Summary (auth required) ─────────────────────────────────────────────
@@ -61,7 +91,7 @@ async def list_plans() -> Any:
 async def get_usage(
     current_user: CurrentUser,
     db: DbSession,
-) -> Any:
+) -> UsageSummaryResponse:
     """
     Return current usage summary for the authenticated user's workspace.
 
@@ -73,21 +103,111 @@ async def get_usage(
 
     Use this to drive usage bars and upgrade CTAs in the frontend.
     """
-    from sqlalchemy import select
-
-    # Resolve workspace_id for the current user
-    stmt = select(WorkspaceMember.workspace_id).where(
-        WorkspaceMember.user_id == current_user.id
-    )
-    result = await db.execute(stmt)
-    workspace_id = result.scalars().first()
-    if not workspace_id:
-        raise HTTPException(
-            status_code=400,
-            detail="User has no workspace. Please complete onboarding.",
-        )
+    workspace_id = await _resolve_workspace_id(db, current_user)
 
     return await get_usage_summary(db, workspace_id)
+
+
+@router.post("/checkout", response_model=CheckoutResponse)
+async def create_checkout(
+    data: CheckoutRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> CheckoutResponse:
+    """
+    Create a Stripe Checkout Session for a paid workspace subscription.
+    """
+    plan_key = _parse_paid_plan_or_400(data.plan_key)
+    workspace_id = await _resolve_workspace_id(db, current_user)
+    try:
+        session = await stripe_service.create_checkout_session(
+            db=db,
+            workspace_id=workspace_id,
+            user=current_user,
+            plan_key=plan_key,
+        )
+    except BillingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except BillingSetupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return CheckoutResponse(
+        checkout_url=session.checkout_url,
+        session_id=session.session_id,
+        mode=session.mode,
+    )
+
+
+@router.post("/portal", response_model=PortalResponse)
+async def create_portal(
+    current_user: CurrentUser,
+    db: DbSession,
+) -> PortalResponse:
+    """
+    Create a Stripe Customer Portal session for the current workspace.
+    """
+    workspace_id = await _resolve_workspace_id(db, current_user)
+    try:
+        portal = await stripe_service.create_customer_portal_session(
+            db=db,
+            workspace_id=workspace_id,
+            user=current_user,
+        )
+    except BillingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except BillingSetupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return PortalResponse(
+        portal_url=portal.portal_url,
+        mode=portal.mode,
+        message=portal.message,
+    )
+
+
+@router.post("/webhooks/stripe", include_in_schema=False)
+async def stripe_webhook(
+    request: Request,
+    db: DbSession,
+    stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
+) -> dict[str, str]:
+    """
+    Stripe webhook endpoint.
+
+    This route is intentionally unauthenticated. Live mode verifies the
+    Stripe-Signature header before any event is processed.
+    """
+    payload = await request.body()
+    try:
+        event = stripe_service.construct_webhook_event(payload, stripe_signature)
+    except stripe_service.StripeWebhookVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid webhook.",
+        ) from exc
+    except BillingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except BillingSetupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        return await stripe_service.handle_webhook_event(db, event)
+    except stripe_service.StripeWebhookProcessingError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook processing failed.",
+        ) from None
 
 
 # ── Dev Routes (development only) ─────────────────────────────────────────────
@@ -113,7 +233,7 @@ async def dev_set_plan(
     data: SetDevPlanRequest,
     current_user: CurrentUser,
     db: DbSession,
-) -> Any:
+) -> dict[str, object]:
     """
     **DEV ONLY** — Override the workspace plan for testing.
 
@@ -143,6 +263,7 @@ async def dev_set_plan(
     if subscription:
         subscription.plan_key = data.plan_key.value
         subscription.status = SubscriptionStatus.ACTIVE
+        subscription.provider = "manual"
         subscription.updated_at = now
     else:
         # Calculate current month period
@@ -156,6 +277,7 @@ async def dev_set_plan(
             workspace_id=workspace_id,
             plan_key=data.plan_key.value,
             status=SubscriptionStatus.ACTIVE,
+            provider="manual",
             current_period_start=period_start,
             current_period_end=period_end,
             cancel_at_period_end=False,
@@ -179,6 +301,42 @@ async def dev_set_plan(
 
 
 @router.post(
+    "/dev/mock-checkout-complete",
+    status_code=200,
+    dependencies=[DevEnv],
+)
+async def dev_mock_checkout_complete(
+    data: MockCheckoutCompleteRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> dict[str, object]:
+    """
+    **DEV ONLY** - Complete a mock Stripe checkout for local testing.
+    """
+    if settings.STRIPE_MODE != "mock":
+        raise HTTPException(
+            status_code=403,
+            detail="Mock checkout completion requires STRIPE_MODE=mock.",
+        )
+
+    plan_key = _parse_paid_plan_or_400(data.plan_key)
+    workspace_id = await _resolve_workspace_id(db, current_user)
+    try:
+        result = await stripe_service.mock_checkout_success(
+            db=db,
+            workspace_id=workspace_id,
+            user_id=current_user.id,
+            plan_key=plan_key,
+        )
+    except BillingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return {"workspace_id": str(workspace_id), **result}
+
+
+@router.post(
     "/dev/grant-usage",
     status_code=200,
     dependencies=[DevEnv],
@@ -187,7 +345,7 @@ async def dev_grant_usage(
     data: GrantDevUsageRequest,
     current_user: CurrentUser,
     db: DbSession,
-) -> Any:
+) -> dict[str, object]:
     """
     **DEV ONLY** — Artificially increment usage counters for testing limit enforcement.
 
@@ -197,8 +355,9 @@ async def dev_grant_usage(
     event_type: AI_GENERATION | RENDER | PUBLISH | SCHEDULED_PUBLISH
     """
     from sqlalchemy import select
-    from app.services.usage_service import get_or_create_current_usage_counter
+
     from app.models.models import UsageEvent
+    from app.services.usage_service import get_or_create_current_usage_counter
 
     stmt = select(WorkspaceMember.workspace_id).where(
         WorkspaceMember.user_id == current_user.id
@@ -216,7 +375,7 @@ async def dev_grant_usage(
             status_code=422,
             detail=f"Invalid event_type '{data.event_type}'. "
                    "Must be one of: AI_GENERATION, RENDER, PUBLISH, SCHEDULED_PUBLISH",
-        )
+        ) from None
 
     # Add usage event records (bypass limit check)
     for _ in range(data.quantity):

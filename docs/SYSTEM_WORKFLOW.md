@@ -33,6 +33,26 @@
 
 ---
 
+## 1.1 Billing Workflow
+
+```
+Workspace starts on FREE
+  -> user opens /dashboard/billing
+  -> frontend loads GET /api/v1/billing/plans and /usage
+  -> user clicks Upgrade for CREATOR or PRO
+  -> API creates Stripe Checkout Session in subscription mode
+  -> Stripe redirects user through hosted Checkout
+  -> Stripe webhook updates workspace_subscriptions
+  -> UsageService reads the effective plan for limit checks
+  -> user manages payment/cancel/plan changes through Stripe Customer Portal
+```
+
+Paid limits are effective only while subscription status is `active` or
+`trialing`. Canceled, unpaid, past-due, and incomplete subscriptions fall back
+to `FREE` limits for enforcement while preserving billing status for the UI.
+
+---
+
 ## 2. Internal Generation Flow
 
 ```
@@ -170,7 +190,26 @@ POST /api/v1/publish-jobs
 
 ---
 
-## 5. Failure & Retry Flow
+## 5. Usage Idempotency and Retry Safety
+
+Expensive actions are checked and consumed in the API or worker only after request validation and job creation:
+
+- create/generate and regenerate create a `GenerationJob`, flush it, then consume `AI_GENERATION`
+- render creates a `RenderJob`, flushes it, then consumes `RENDER`
+- publish now validates project, rendered video, social account, token preflight, and public URL, then creates a `PublishJob` and consumes `PUBLISH`
+- schedule validates project, rendered video, social account, public URL, and schedule time before creating a scheduled `PublishJob`
+- scheduled publish creation records a `SCHEDULED_PUBLISH` event and occupies an active schedule slot
+- scheduled publish execution consumes monthly `PUBLISH` quota when the publish pipeline starts
+
+`related_job_id` is the usage event idempotency key. Retries of the same generation, render, publish, or scheduled publish job do not double-charge because `consume_usage()` checks for an existing usage event before quota checks or counter increments.
+
+If scheduled publish execution is blocked by monthly publish quota, the worker does not call Meta, marks the publish job failed with `USAGE_LIMIT_EXCEEDED`, and leaves the project/version ready to publish.
+
+Public HTTPS video URL validation happens before publish usage is consumed in live mode.
+
+---
+
+## 6. Failure & Retry Flow
 
 ```
 [Worker] Task failure handling:

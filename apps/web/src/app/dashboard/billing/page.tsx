@@ -1,10 +1,26 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient, UsageSummary, PlanDefinition } from "@/lib/api-client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Check,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  Sparkles,
+  Zap,
+} from "lucide-react";
+import { apiClient } from "@/lib/api-client";
+import type { ApiError, PlanDefinition, PlanKey } from "@/lib/api-client";
+
+function getErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "message" in err) {
+    return String((err as ApiError).message);
+  }
+  return "Billing request failed. Please try again.";
+}
 
 // ── Usage Meter ────────────────────────────────────────────────────────────────
 
@@ -89,9 +105,15 @@ function PlanBadge({ planKey }: { planKey: string }) {
 function PlanCard({
   plan,
   isCurrent,
+  isMockMode,
+  isUpgradePending,
+  onUpgrade,
 }: {
   plan: PlanDefinition;
   isCurrent: boolean;
+  isMockMode: boolean;
+  isUpgradePending: boolean;
+  onUpgrade: (planKey: PlanKey) => void;
 }) {
   const features = [
     `${plan.ai_generations_per_month} AI generations / mo`,
@@ -111,7 +133,8 @@ function PlanCard({
     >
       {isCurrent && (
         <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-          <span className="bg-violet-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+          <span className="inline-flex items-center gap-1 bg-violet-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+            <Check className="h-3 w-3" />
             CURRENT PLAN
           </span>
         </div>
@@ -131,12 +154,33 @@ function PlanCard({
         ))}
       </ul>
 
-      {!isCurrent && (
-        <div className="text-center">
-          <p className="text-xs text-gray-500">
-            Contact us to upgrade — Stripe billing coming soon.
-          </p>
+      {!isCurrent && plan.key !== "FREE" && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => onUpgrade(plan.key)}
+            disabled={!plan.checkout_available || isUpgradePending}
+            className="btn-primary w-full justify-center"
+          >
+            {isUpgradePending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isMockMode ? (
+              <Zap className="h-4 w-4" />
+            ) : (
+              <CreditCard className="h-4 w-4" />
+            )}
+            {isMockMode ? "Mock upgrade" : "Upgrade"}
+          </button>
+          {!plan.checkout_available && (
+            <p className="text-xs text-amber-300">
+              Stripe price is not configured for this plan.
+            </p>
+          )}
         </div>
+      )}
+
+      {!isCurrent && plan.key === "FREE" && (
+        <p className="text-xs text-gray-500">Included for every workspace.</p>
       )}
     </div>
   );
@@ -146,6 +190,9 @@ function PlanCard({
 
 export default function BillingPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<PlanKey | null>(null);
 
   useEffect(() => {
     if (!localStorage.getItem("access_token")) {
@@ -165,8 +212,45 @@ export default function BillingPage() {
     staleTime: 5 * 60_000,
   });
 
+  const checkoutMutation = useMutation({
+    mutationFn: (planKey: PlanKey) => apiClient.createCheckoutSession(planKey),
+    onMutate: (planKey) => {
+      setPendingPlan(planKey);
+      setErrorMessage(null);
+    },
+    onSuccess: (data) => {
+      window.location.assign(data.checkout_url);
+    },
+    onError: (err) => {
+      setErrorMessage(getErrorMessage(err));
+      setPendingPlan(null);
+    },
+  });
+
+  const portalMutation = useMutation({
+    mutationFn: () => apiClient.createBillingPortalSession(),
+    onMutate: () => {
+      setErrorMessage(null);
+    },
+    onSuccess: (data) => {
+      if (data.mode === "mock") {
+        queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
+      }
+      window.location.assign(data.portal_url);
+    },
+    onError: (err) => {
+      setErrorMessage(getErrorMessage(err));
+    },
+  });
+
   const isLoading = usageLoading || plansLoading;
-  const currentPlanKey = usage?.plan.key ?? "FREE";
+  const currentPlanKey = usage?.current_plan ?? usage?.plan.key ?? "FREE";
+  const subscriptionPlanKey = usage?.subscription_plan_key ?? currentPlanKey;
+  const subscriptionStatus = usage?.subscription_status ?? "active";
+  const provider = usage?.provider ?? "manual";
+  const isMockMode = usage?.stripe_mode === "mock";
+  const canOpenPortal = usage?.billing_portal_available ?? isMockMode;
+  const showBillingWarning = !["active", "trialing"].includes(subscriptionStatus);
 
   // Format period range
   const periodRange = usage
@@ -194,6 +278,58 @@ export default function BillingPage() {
         <div className="p-4 rounded-xl bg-red-950/50 border border-red-800/50 text-red-300 text-sm mb-6">
           Failed to load usage data. Please refresh the page.
         </div>
+      )}
+
+      {errorMessage && (
+        <div className="p-4 rounded-xl bg-red-950/50 border border-red-800/50 text-red-300 text-sm mb-6">
+          {errorMessage}
+        </div>
+      )}
+
+      {usage && (
+        <section className="mb-8">
+          <div className="card">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <PlanBadge planKey={currentPlanKey} />
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-xs font-medium text-gray-300">
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-300" />
+                    {subscriptionStatus.replaceAll("_", " ")}
+                  </span>
+                  {isMockMode && (
+                    <span className="rounded-full border border-amber-700 bg-amber-950/40 px-3 py-1 text-xs font-medium text-amber-200">
+                      Mock Stripe mode
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-400">
+                  Provider: {provider} | Subscription plan: {subscriptionPlanKey}
+                </p>
+                {showBillingWarning && (
+                  <p className="flex items-center gap-2 text-sm text-amber-300">
+                    <AlertTriangle className="h-4 w-4" />
+                    Paid limits are paused until the subscription is active again.
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => portalMutation.mutate()}
+                disabled={!canOpenPortal || portalMutation.isPending}
+                className="btn-secondary justify-center"
+              >
+                {portalMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ExternalLink className="h-4 w-4" />
+                )}
+                Manage Billing
+              </button>
+            </div>
+          </div>
+        </section>
       )}
 
       {/* Current Usage Card */}
@@ -283,21 +419,14 @@ export default function BillingPage() {
                 key={plan.key}
                 plan={plan}
                 isCurrent={plan.key === currentPlanKey}
+                isMockMode={isMockMode}
+                isUpgradePending={pendingPlan === plan.key && checkoutMutation.isPending}
+                onUpgrade={(planKey) => checkoutMutation.mutate(planKey)}
               />
             ))}
           </div>
         ) : null}
 
-        <p className="text-xs text-gray-600 text-center mt-6">
-          Stripe billing integration coming soon. Contact{" "}
-          <a
-            href="mailto:billing@ai-reel-studio.com"
-            className="text-violet-500 hover:underline"
-          >
-            billing@ai-reel-studio.com
-          </a>{" "}
-          to upgrade manually.
-        </p>
       </section>
     </div>
   );
