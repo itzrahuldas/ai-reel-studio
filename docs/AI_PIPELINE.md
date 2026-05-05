@@ -1,9 +1,41 @@
 # AI Pipeline — AI Reel Studio
 
 **Version:** 0.1.0
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-05-05
 
 ---
+
+## Phase 1 Real Provider Update
+
+The generation pipeline now supports provider-selected creative planning, image
+analysis, TTS voiceover generation, and timed subtitle alignment.
+
+Provider modes are selected independently:
+
+- `AI_PROVIDER=mock|openai`
+- `IMAGE_ANALYSIS_PROVIDER=mock|openai`
+- `TTS_PROVIDER=mock|openai`
+
+Mock remains the default and does not call external APIs. OpenAI mode uses the
+server-only `AI_API_KEY`; missing keys return a setup error before usage is
+consumed.
+
+Runtime flow:
+
+1. Usage is validated with the existing job idempotency key.
+2. The uploaded source image is resolved from `media_assets`.
+3. The image analysis provider returns safe visual context.
+4. The creative planner returns a Pydantic-validated JSON creative plan.
+5. TTS writes voiceover audio to local/S3-compatible media storage and creates
+   an `audio` media asset.
+6. Subtitle timings are generated or aligned to the voiceover duration.
+7. `reel_versions`, `generation_jobs.output_payload`, and
+   `generation_jobs.provider_metadata_json` store safe provider metadata.
+8. The project/version moves to `READY_FOR_REVIEW`.
+
+Phase 1 intentionally does not implement real AI video generation. FFmpeg still
+renders from the source image, storyboard text, subtitles, and optional
+voiceover audio.
 
 ## 1. Prompt-to-Storyboard Pipeline
 

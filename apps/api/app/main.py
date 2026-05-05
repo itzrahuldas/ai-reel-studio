@@ -2,9 +2,9 @@
 AI Reel Studio — FastAPI Application Entry Point
 """
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request, status
@@ -22,7 +22,7 @@ logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler — startup and shutdown events."""
     configure_logging()
     logger.info("ai_reel_studio.startup", version=settings.APP_VERSION, env=settings.APP_ENV)
@@ -64,8 +64,8 @@ def create_app() -> FastAPI:
     # ── Static Files (local dev uploads) ─────────────────────────────────────
     # Serves uploaded source images at /static/uploads/<filename>
     # In production, files are served from S3/CDN — this mount is dev-only.
-    uploads_dir = os.path.join(settings.LOCAL_STORAGE_PATH, "uploads")
-    os.makedirs(uploads_dir, exist_ok=True)
+    uploads_dir = Path(settings.LOCAL_STORAGE_PATH) / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=settings.LOCAL_STORAGE_PATH), name="static")
 
     # ── Health Check ──────────────────────────────────────────────────────────

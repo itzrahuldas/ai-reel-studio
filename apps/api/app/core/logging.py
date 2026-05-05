@@ -15,7 +15,7 @@ REDACTED_KEYS = frozenset(
 )
 
 
-def redact_sensitive_fields(logger: object, method: str, event_dict: EventDict) -> EventDict:
+def redact_sensitive_fields(_logger: object, _method: str, event_dict: EventDict) -> EventDict:
     """Structlog processor that redacts known sensitive field names."""
     for key in list(event_dict.keys()):
         if key.lower() in REDACTED_KEYS:

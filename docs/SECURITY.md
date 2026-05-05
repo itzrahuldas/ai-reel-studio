@@ -1,7 +1,7 @@
 # Security — AI Reel Studio
 
 **Version:** 0.1.0
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-05-05
 
 ---
 
@@ -27,6 +27,37 @@
 - Mock Stripe routes are blocked unless `APP_ENV=development` and `STRIPE_MODE=mock`.
 - Users cannot choose a workspace ID for billing changes; the backend resolves the authenticated user's workspace membership.
 - Dev set-plan routes remain unavailable in production.
+
+---
+
+## 1.2 AI Provider Security
+
+- `AI_API_KEY` is a server-only secret and is never returned to the frontend.
+- Mock AI providers remain the default for local development.
+- If any OpenAI provider is selected without `AI_API_KEY`, the API returns a
+  setup error before usage is consumed.
+- Provider errors are sanitized before being stored on generation jobs or shown
+  in the UI.
+- Full user prompts and uploaded image contents are not logged by provider code.
+- TTS audio is stored as a media asset; generated audio/video files are not
+  committed to the repository.
+- Phase 1 does not handle card data, Stripe Connect, or real AI video provider
+  credentials.
+
+---
+
+## 1.3 Production Environment Hardening
+
+- `APP_ENV=production` disables interactive API docs and must not use mock-only routes.
+- `ALLOWED_ORIGINS` must be an exact allowlist for production frontend origins.
+- `.env`, `.env.*`, local media, generated audio/video, and build caches are ignored.
+- `.env.example` remains tracked and must contain placeholders only.
+- Mock Instagram, mock Stripe checkout completion, and development plan mutation
+  routes are blocked outside development/mock mode.
+- Public media URLs for Instagram publishing must be HTTPS and must not expose
+  raw filesystem paths.
+- CI uses fake test secrets only and runs Postgres/Redis-backed checks through
+  GitHub Actions services.
 
 ---
 

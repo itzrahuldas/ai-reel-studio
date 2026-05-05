@@ -97,6 +97,7 @@ class FFmpegRenderer:
         logger.debug("ffmpeg_render.command", cmd=" ".join(cmd))
 
         start_time = time.monotonic()
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -106,12 +107,12 @@ class FFmpegRenderer:
             _, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=FFMPEG_TIMEOUT_SECONDS
             )
-        except TimeoutError:
+        except TimeoutError as exc:
             if proc:
                 proc.kill()
             raise FFmpegTimeoutError(
                 f"FFmpeg render exceeded {FFMPEG_TIMEOUT_SECONDS}s timeout"
-            )
+            ) from exc
 
         elapsed = time.monotonic() - start_time
 
@@ -202,7 +203,7 @@ class FFmpegRenderer:
             cmd += [
                 "-f", "lavfi",
                 "-i", f"aevalsrc=0:c=stereo:s=44100:d={params.duration_seconds}",
-                "-map", "0:v", "-map", "2:a",
+                "-map", "0:v", "-map", "1:a",
                 "-c:a", "aac", "-b:a", "128k",
             ]
 

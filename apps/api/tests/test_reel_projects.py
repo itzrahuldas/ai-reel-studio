@@ -14,12 +14,18 @@ Test categories:
 - Worker task (idempotency, failure handling)
 """
 
+import importlib
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_current_user
 from app.main import app
 from app.models.models import (
     GenerationJob,
@@ -44,6 +50,13 @@ FAKE_TOKEN = "fake-bearer-token"
 AUTH_HEADERS = {"Authorization": f"Bearer {FAKE_TOKEN}"}
 
 
+@pytest.fixture(autouse=True)
+def _clear_dependency_overrides():
+    app.dependency_overrides.clear()
+    yield
+    app.dependency_overrides.clear()
+
+
 def _make_user():
     u = MagicMock()
     u.id = FAKE_USER_ID
@@ -52,6 +65,43 @@ def _make_user():
     u.is_active = True
     u.is_verified = False
     return u
+
+
+def _authenticate_user() -> None:
+    async def _current_user():
+        return _make_user()
+
+    app.dependency_overrides[get_current_user] = _current_user
+
+
+@contextmanager
+def _worker_generate_module() -> Iterator[object]:
+    """Import worker tasks with worker package precedence, then restore API imports."""
+    api_root = Path(__file__).resolve().parents[1]
+    worker_root = Path(__file__).resolve().parents[2] / "worker"
+    saved_path = sys.path[:]
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "app" or name.startswith("app.")
+    }
+
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+
+    sys.path[:] = [str(worker_root), str(api_root)] + [
+        path for path in sys.path if path not in {str(worker_root), str(api_root)}
+    ]
+
+    try:
+        yield importlib.import_module("app.tasks.generate_reel")
+    finally:
+        for name in list(sys.modules):
+            if name == "app" or name.startswith("app."):
+                del sys.modules[name]
+        sys.modules.update(saved_modules)
+        sys.path[:] = saved_path
 
 
 def _make_project():
@@ -87,6 +137,13 @@ def _make_version():
     v.video_prompt = "Cinematic vertical video"
     v.estimated_duration = 15
     v.moderation_flags = {"contains_harmful_content": False}
+    v.render_settings = None
+    v.edit_metadata = None
+    v.audio_asset_id = None
+    v.voiceover_asset_id = None
+    v.video_asset_id = None
+    v.rendered_asset_id = None
+    v.thumbnail_asset_id = None
     v.status = ReelProjectStatus.READY_FOR_REVIEW
     v.approved_at = None
     v.created_at = "2026-05-03T10:00:00Z"
@@ -104,6 +161,9 @@ def _make_job():
     j.started_at = None
     j.completed_at = None
     j.error_message = None
+    j.provider = None
+    j.provider_metadata_json = None
+    j.error_code = None
     j.retry_count = 0
     j.created_at = "2026-05-03T10:00:00Z"
     j.updated_at = "2026-05-03T10:00:00Z"
@@ -117,7 +177,14 @@ def _make_render_job():
     j.project_id = FAKE_PROJECT_ID
     j.version_id = FAKE_VERSION_ID
     j.status = JobStatus.QUEUED
+    j.celery_task_id = None
     j.renderer = "ffmpeg"
+    j.started_at = None
+    j.completed_at = None
+    j.error_message = None
+    j.command_log = None
+    j.input_payload = None
+    j.output_payload = None
     j.created_at = "2026-05-03T10:00:00Z"
     j.updated_at = "2026-05-03T10:00:00Z"
     return j
@@ -128,10 +195,9 @@ def _make_render_job():
 @patch("app.api.deps.decode_token")
 @patch("app.api.deps.AsyncSession.get")
 @patch("app.api.v1.routers.media_assets._resolve_workspace", new_callable=AsyncMock)
-@patch("app.api.v1.routers.media_assets.open", create=True)
-@patch("app.api.v1.routers.media_assets.os.makedirs")
-def test_upload_media_asset_unsupported_type(mock_makedirs, mock_open, mock_ws, mock_get, mock_decode):
+def test_upload_media_asset_unsupported_type(mock_ws, mock_get, mock_decode):
     """Reject files that are not jpeg/png/webp."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_get.return_value = _make_user()
 
@@ -168,6 +234,7 @@ def test_create_reel_project_unauthenticated():
 @patch("app.api.v1.routers.reel_projects.create_reel_project", new_callable=AsyncMock)
 def test_create_reel_project_success(mock_create, mock_decode):
     """Authenticated user creates a reel project successfully."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_create.return_value = (_make_project(), _make_version(), _make_job())
 
@@ -194,6 +261,7 @@ def test_create_reel_project_success(mock_create, mock_decode):
 @patch("app.api.v1.routers.reel_projects.create_reel_project", new_callable=AsyncMock)
 def test_create_reel_project_with_image(mock_create, mock_decode):
     """Project creation accepts source_image_id."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     project = _make_project()
     project.source_image_id = FAKE_ASSET_ID
@@ -218,6 +286,7 @@ def test_create_reel_project_with_image(mock_create, mock_decode):
 @patch("app.api.v1.routers.reel_projects.get_projects", new_callable=AsyncMock)
 def test_list_projects_success(mock_list, mock_decode):
     """Authenticated user can list their workspace projects."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_list.return_value = [_make_project()]
 
@@ -233,6 +302,7 @@ def test_list_projects_success(mock_list, mock_decode):
 @patch("app.api.v1.routers.reel_projects.get_project_with_version", new_callable=AsyncMock)
 def test_get_project_with_version_detail(mock_get, mock_decode):
     """Reel detail endpoint returns project + latest version content."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     version = _make_version()
     version.status = ReelProjectStatus.READY_FOR_REVIEW
@@ -251,6 +321,7 @@ def test_get_project_with_version_detail(mock_get, mock_decode):
 def test_get_project_not_found(mock_get, mock_decode):
     """Returns 404 for non-existent or inaccessible project."""
     from fastapi import HTTPException
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_get.side_effect = HTTPException(status_code=404, detail="Project not found")
 
@@ -262,6 +333,7 @@ def test_get_project_not_found(mock_get, mock_decode):
 @patch("app.api.v1.routers.reel_projects.regenerate_reel_project", new_callable=AsyncMock)
 def test_regenerate_creates_new_version(mock_regen, mock_decode):
     """Regenerate endpoint creates new version + job."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     new_version = _make_version()
     new_version.version_number = 2
@@ -282,6 +354,7 @@ def test_regenerate_creates_new_version(mock_regen, mock_decode):
 @patch("app.api.v1.routers.reel_projects.get_project_jobs", new_callable=AsyncMock)
 def test_get_project_jobs(mock_jobs, mock_decode):
     """Jobs endpoint returns generation timeline."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_jobs.return_value = [_make_job()]
 
@@ -301,6 +374,7 @@ def test_get_project_jobs(mock_jobs, mock_decode):
 @patch("app.api.v1.routers.reel_projects.create_render_job", new_callable=AsyncMock)
 def test_render_project_success(mock_render, mock_decode):
     """Render endpoint creates a render job and returns it."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_render.return_value = (_make_render_job(), _make_project(), _make_version())
 
@@ -324,6 +398,7 @@ def test_render_project_unauthenticated():
 @patch("app.api.v1.routers.reel_projects.get_render_jobs", new_callable=AsyncMock)
 def test_get_render_jobs(mock_get_jobs, mock_decode):
     """Render jobs endpoint returns list of render jobs."""
+    _authenticate_user()
     mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
     mock_get_jobs.return_value = [_make_render_job()]
 
@@ -380,38 +455,40 @@ async def test_hinglish_language_accepted():
 
 # ── Worker Task Tests (unit-level, no DB) ─────────────────────────────────────
 
-@patch("app.tasks.generate_reel._get_sync_db")
-def test_worker_task_missing_job(mock_db):
+def test_worker_task_missing_job():
     """Task returns error if job not found in DB."""
     session = MagicMock()
     session.get.return_value = None
-    mock_db.return_value = session
 
-    from app.tasks.generate_reel import generate_reel_mock_task
-    result = generate_reel_mock_task.run(
-        project_id=str(uuid4()),
-        version_id=str(uuid4()),
-        job_id=str(uuid4()),
-    )
+    with _worker_generate_module() as worker_generate, patch.object(
+        worker_generate, "_get_sync_db", return_value=session
+    ):
+        result = worker_generate.generate_reel_mock_task.run(
+            project_id=str(uuid4()),
+            version_id=str(uuid4()),
+            job_id=str(uuid4()),
+        )
     assert result["status"] == "error"
     assert result["reason"] == "missing_records"
 
 
-@patch("app.tasks.generate_reel._get_sync_db")
-def test_worker_task_idempotent(mock_db):
+def test_worker_task_idempotent():
     """Task skips execution if job is already COMPLETE."""
     job = MagicMock(spec=GenerationJob)
     job.status = JobStatus.COMPLETE
 
     session = MagicMock()
-    session.get.side_effect = lambda model, pk: job if model == GenerationJob else MagicMock()
-    mock_db.return_value = session
-
-    from app.tasks.generate_reel import generate_reel_mock_task
-    result = generate_reel_mock_task.run(
-        project_id=str(uuid4()),
-        version_id=str(uuid4()),
-        job_id=str(uuid4()),
+    session.get.side_effect = (
+        lambda model, pk: job if getattr(model, "__name__", None) == "GenerationJob" else MagicMock()
     )
+
+    with _worker_generate_module() as worker_generate, patch.object(
+        worker_generate, "_get_sync_db", return_value=session
+    ):
+        result = worker_generate.generate_reel_mock_task.run(
+            project_id=str(uuid4()),
+            version_id=str(uuid4()),
+            job_id=str(uuid4()),
+        )
     assert result["status"] == "skipped"
     assert result["reason"] == "already_complete"

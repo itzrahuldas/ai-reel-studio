@@ -1,9 +1,20 @@
 # Video Rendering — AI Reel Studio
 
 **Version:** 0.1.0
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-05-05
 
 ---
+
+## Phase 1 Voiceover Integration
+
+Real AI Provider Phase 1 can create a TTS voiceover asset during generation.
+When `reel_versions.voiceover_asset_id` exists, render jobs resolve the audio
+media asset and pass it into `FFmpegRenderer`. If no voiceover exists, rendering
+keeps the existing silent-audio fallback.
+
+Subtitles are still burned into the MP4 from `reel_versions.subtitle_lines`.
+When voiceover duration is available, subtitle timings are proportionally
+aligned to that duration before the version is marked ready for review.
 
 ## 1. Target MP4 Format
 

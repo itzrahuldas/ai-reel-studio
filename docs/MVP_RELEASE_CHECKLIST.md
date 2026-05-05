@@ -1,42 +1,62 @@
 # MVP Release Checklist
 
-## 1. Local Setup Checklist
-- [x] Configure `.env` with `DATABASE_URL`, `REDIS_URL`, and `SECRET_KEY`.
-- [x] Configure `.env` with `TOKEN_ENCRYPTION_KEY` (must be 64-character hex).
-- [x] Verify `INSTAGRAM_INTEGRATION_MODE="mock"` is active for safe local development.
-- [x] Validate `docker-compose up` cleanly builds `api`, `worker`, and `postgres` services.
+**Last Updated:** 2026-05-05
 
-## 2. Staging Deployment Checklist
-- [ ] Deploy PostgreSQL and Redis managed instances.
-- [ ] Apply Alembic Migrations against the Staging database.
-- [ ] Configure `APP_ENV="staging"`.
-- [ ] Configure `API_PUBLIC_BASE_URL` with public HTTPS domain.
-- [ ] Spin up Celery worker instances (`celery -A app.main worker`).
-- [ ] Ensure `META_APP_ID` and `META_APP_SECRET` point to Meta Test App.
+## Local Readiness
 
-## 3. Production Deployment Checklist
-- [ ] Ensure all mock flags are explicitly toggled off (`INSTAGRAM_INTEGRATION_MODE="live"`).
-- [ ] Configure production-grade Cloudflare/Nginx proxy for Web and API instances.
-- [ ] Enforce CORS specifically matching the `FRONTEND_URL`.
-- [ ] Setup persistent Volumes/S3 mappings for `MediaAsset` local storage paths.
-- [ ] Validate proper production credentials for Meta Graph API integration.
+- [x] `.env.example` contains the current app, database, Redis, auth, storage, Meta, Stripe, AI, runtime mode, upload, and frontend variables.
+- [x] Mock mode remains the default for Instagram, Stripe, and AI providers.
+- [x] `apps/web/tsconfig.tsbuildinfo` is ignored as generated TypeScript cache.
+- [x] Backend lint is configured for the current codebase.
+- [x] Frontend lint and typecheck pass locally.
 
-## 4. Meta App Review Checklist
-- [ ] Ensure Application is verified as a Business.
-- [ ] Configure the correct `META_REDIRECT_URI` matching production SSL.
-- [ ] Submit requests for `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement` scopes.
-- [ ] Produce walkthrough video required by Meta for App Review demonstrating the login & publish flow.
+## CI Gates
 
-## 5. Storage / Public URL Checklist
-- [x] The application handles absolute URLs and local file system mounts securely without OS traversal risks.
-- [ ] If using AWS S3, verify `S3_ENDPOINT_URL`, `S3_BUCKET`, and `STORAGE_PROVIDER="s3"` are configured in `.env`.
+- [x] GitHub Actions config installs backend dependencies from `apps/api/pyproject.toml`.
+- [x] CI provides Postgres and Redis services.
+- [x] CI runs backend Ruff, Alembic upgrade/history/heads, pytest, and worker import validation.
+- [x] CI runs frontend install, lint, typecheck, and build.
+- [ ] Confirm the updated CI workflow passes on GitHub after push.
 
-## 6. Security Checklist
-- [x] Token Encryption Key mapped globally for Fernet interactions.
-- [x] JWT algorithms mapped for access/refresh validations.
-- [x] Workspace enforcement is absolute across all critical read/write queries.
-- [x] API outputs strictly filter access tokens from Meta errors (`normalize_meta_error` concepts integrated implicitly in `InstagramClient._raise_for_error`).
+## Staging Launch Gates
 
-## 7. Launch Readiness Status
-- **Status:** READY FOR RELEASE (MVP Level 1).
-- **Recommendation:** Can safely ship to staging/beta clients immediately to validate end-to-end rendering logic without Advanced Editor enhancements.
+- [ ] Apply Alembic migrations to the staging database.
+- [ ] Configure `APP_ENV=staging`.
+- [ ] Configure exact `ALLOWED_ORIGINS` and `FRONTEND_URL`.
+- [ ] Configure `API_PUBLIC_BASE_URL` and `STORAGE_PUBLIC_BASE_URL` as HTTPS URLs.
+- [ ] Run `api`, `worker-generation`, `worker-rendering`, `worker-publishing`, and `celery-beat`.
+- [ ] Verify Redis queue connectivity and Celery Beat schedule.
+- [ ] Verify FFmpeg is installed in the rendering runtime.
+- [ ] Configure S3/R2 or another public HTTPS object storage path.
+- [ ] Verify public media URLs work from outside the deployment network.
+- [ ] Configure Stripe test mode, Checkout, Customer Portal, and webhooks.
+- [ ] Configure Meta OAuth callback for the staging/test app.
+- [ ] Configure OpenAI keys if testing `openai` provider mode.
+- [ ] Run a full test account flow: register, create, render, connect Instagram, publish mock/test, upgrade mock/test billing.
+
+## Production Launch Gates
+
+- [ ] CI is passing on the release branch.
+- [ ] Database backup and rollback plan are prepared.
+- [ ] Alembic migrations applied successfully.
+- [ ] `APP_ENV=production`.
+- [ ] `INSTAGRAM_INTEGRATION_MODE=live`.
+- [ ] `STRIPE_MODE=live`.
+- [ ] Stripe live recurring Price IDs configured for Creator and Pro.
+- [ ] Stripe live webhook endpoint configured with signing secret.
+- [ ] Meta OAuth callback uses production HTTPS URL.
+- [ ] Meta App Review assets are ready.
+- [ ] Terms, privacy policy, and data deletion URLs are ready.
+- [ ] OpenAI provider keys configured server-side only.
+- [ ] Redis workers and Celery Beat running.
+- [ ] FFmpeg installed in rendering workers.
+- [ ] Public HTTPS media URLs verified for Instagram.
+- [ ] S3/R2 lifecycle and access controls configured.
+- [ ] CORS restricted to production frontend only.
+- [ ] Live Stripe checkout tested with a real test purchase path before opening to users.
+
+## Current Status
+
+- **Production readiness pass:** completed locally.
+- **Staging readiness:** ready for CI verification and managed environment configuration.
+- **Production readiness:** not cleared until live Stripe, Meta, OpenAI, object storage, legal URLs, and CI run are verified.

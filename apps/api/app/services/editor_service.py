@@ -61,13 +61,11 @@ async def get_editor_data(
 
     # can publish if rendered and not edited since last render
     has_unrendered_edits = False
-    if version.rendered_asset_id:
-        if version.updated_at > version.created_at:  # simplified check
-            # Real logic: checking if updated_at > render job completed_at would be ideal,
-            # but since we create a new version when editing a published/rendered one,
-            # we can just assume it has unrendered edits if edit_metadata indicates changes after render
-            # Actually, let's use the status check or edit_metadata.
-            pass
+    if version.rendered_asset_id and version.updated_at > version.created_at:
+        # Real logic: checking if updated_at > render job completed_at would be ideal,
+        # but since we create a new version when editing a published/rendered one,
+        # we can just assume it has unrendered edits if edit_metadata indicates changes after render.
+        pass
 
     # A better check for unrendered edits is comparing version.status
     has_unrendered_edits = (version.status == ReelProjectStatus.DRAFT) and (version.rendered_asset_id is not None)
@@ -127,6 +125,7 @@ async def update_reel_version(
             video_prompt=version.video_prompt,
             estimated_duration=version.estimated_duration,
             moderation_flags=version.moderation_flags,
+            voiceover_asset_id=version.voiceover_asset_id,
             audio_asset_id=version.audio_asset_id, # Keep audio if we want, or reset
             # DO NOT copy rendered_asset_id or thumbnail_asset_id
         )
@@ -203,7 +202,9 @@ async def clone_reel_version(
         moderation_flags=version.moderation_flags,
         render_settings=version.render_settings,
         edit_metadata=version.edit_metadata,
-        # Media assets not copied since they belong to a specific render
+        voiceover_asset_id=version.voiceover_asset_id,
+        audio_asset_id=version.audio_asset_id,
+        # Render/video media is not copied because it belongs to a specific render.
     )
     db.add(new_version)
     await db.flush()

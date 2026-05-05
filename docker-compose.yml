@@ -85,16 +85,16 @@ services:
       retries: 3
 
   # ── Worker (Celery) ─────────────────────────────────────────────────────────
-  worker:
+  worker-generation: &worker-base
     build:
-      context: ./apps/worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/worker/Dockerfile
     restart: unless-stopped
     command: >
-      celery -A app.main worker
+      celery -A app.main:celery_app worker
       --loglevel=info
       --concurrency=2
-      --queues=default,generation,rendering,publishing
+      --queues=generation,default
     env_file:
       - .env
     environment:
@@ -103,7 +103,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       S3_ENDPOINT_URL: http://minio:9000
-      PYTHONPATH: /api_src:${PYTHONPATH:-}
+      PYTHONPATH: /app:/api_src:${PYTHONPATH:-}
       LOCAL_STORAGE_PATH: /tmp/ai-reel-studio-storage
     depends_on:
       postgres:
@@ -115,6 +115,26 @@ services:
       - ./apps/api:/api_src
       - local_storage:/tmp/ai-reel-studio-storage
       - worker_tmp:/tmp
+
+  worker-rendering:
+    <<: *worker-base
+    command: >
+      celery -A app.main:celery_app worker
+      --loglevel=info
+      --concurrency=1
+      --queues=rendering
+
+  worker-publishing:
+    <<: *worker-base
+    command: >
+      celery -A app.main:celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --queues=publishing
+
+  celery-beat:
+    <<: *worker-base
+    command: celery -A app.main:celery_app beat --loglevel=info
 
   # ── Frontend (Next.js) ──────────────────────────────────────────────────────
   web:

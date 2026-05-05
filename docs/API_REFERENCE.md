@@ -41,6 +41,7 @@ All errors return:
 | RATE_LIMITED           | 429         | Too many requests              |
 | INTERNAL_ERROR         | 500         | Unexpected server error        |
 | SERVICE_UNAVAILABLE    | 503         | Upstream dependency failure    |
+| AI_PROVIDER_SETUP_REQUIRED | 503     | OpenAI provider selected without server API key |
 
 Usage limit responses use FastAPI's `detail` field:
 ```json
@@ -121,12 +122,49 @@ Response 200: { asset_id, s3_key, signed_url, status, ... }
 ```
 GET  /api/v1/reel-projects                    → list projects (paginated)
 POST /api/v1/reel-projects                    → create project
+GET  /api/v1/reel-projects/ai/provider-status → safe AI provider mode/status
 GET  /api/v1/reel-projects/{id}               → get project + latest version
 PATCH /api/v1/reel-projects/{id}              → update project settings
 DELETE /api/v1/reel-projects/{id}             → soft delete
 PATCH /api/v1/reel-projects/{id}/start-generation → trigger AI generation
 POST /api/v1/reel-projects/{id}/retry         → retry failed generation
 ```
+
+`GET /api/v1/reel-projects/ai/provider-status` is authenticated and never
+returns API keys. Response:
+
+```json
+{
+  "ai_provider": "mock",
+  "image_analysis_provider": "mock",
+  "tts_provider": "mock",
+  "ai_model": "gpt-4.1-mini",
+  "image_analysis_model": "gpt-4.1-mini",
+  "tts_model": "gpt-4o-mini-tts",
+  "tts_voice": "coral",
+  "configured": true,
+  "supported": true,
+  "setup_warning": null,
+  "mock_mode": true
+}
+```
+
+If OpenAI is selected without `AI_API_KEY`, generation returns 503 before usage
+is consumed:
+
+```json
+{
+  "detail": {
+    "code": "AI_PROVIDER_SETUP_REQUIRED",
+    "message": "OpenAI provider is selected but AI_API_KEY is not configured."
+  }
+}
+```
+
+Reel version responses may include `voiceover_asset_id`, `audio_asset_id`,
+`render_settings`, and `edit_metadata`. Provider metadata shown to the frontend
+is limited to safe fields such as provider names, image analysis summary,
+voiceover status, warnings, and sanitized error messages.
 
 ### Reel Versions
 ```
@@ -141,6 +179,9 @@ POST /api/v1/reel-versions/{id}/reject        → reject version
 ```
 GET /api/v1/generation-jobs/{id}              → get job status + logs
 ```
+
+Generation job responses include `provider`, `provider_metadata_json`, and
+`error_code`.
 
 ### Publish Jobs
 ```

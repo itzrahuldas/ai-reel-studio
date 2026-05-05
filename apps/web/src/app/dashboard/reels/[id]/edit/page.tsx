@@ -55,6 +55,13 @@ export default function EditorPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [usageLimitError, setUsageLimitError] = useState<UsageLimitError | null>(null);
 
+  const voiceoverAssetId = data?.version.voiceover_asset_id ?? data?.version.audio_asset_id;
+  const { data: voiceoverAsset } = useQuery({
+    queryKey: ["media-asset", voiceoverAssetId],
+    queryFn: () => apiClient.getMediaAsset(voiceoverAssetId!),
+    enabled: !!voiceoverAssetId,
+  });
+
   // Initialize state from data
   useEffect(() => {
     if (data?.version && !isDirty) {
@@ -296,6 +303,19 @@ export default function EditorPage() {
                   onChange={(e) => { setVoiceoverText(e.target.value); markDirty(); }}
                   className="w-full bg-gray-900 border border-gray-700 rounded-md p-2 text-white text-sm min-h-[100px]"
                 />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-400">Generated Audio</span>
+                  <span className="text-xs text-gray-500 capitalize">
+                    {(data.version.edit_metadata?.voiceover_status as string | undefined) ?? "missing"}
+                  </span>
+                </div>
+                {voiceoverAsset?.url ? (
+                  <audio src={voiceoverAsset.url} controls className="w-full" />
+                ) : (
+                  <p className="text-xs text-gray-600">No voiceover audio attached.</p>
+                )}
               </div>
             </div>
           </SectionCard>

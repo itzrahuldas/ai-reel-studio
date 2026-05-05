@@ -6,7 +6,7 @@ import { QueryProvider } from "@/lib/query-provider";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "AI Reel Studio — Generate Instagram Reels with AI",
+  title: "AI Reel Studio â€” Generate Instagram Reels with AI",
   description:
     "Transform your business idea into a complete Instagram Reel in minutes. AI-powered script, storyboard, voiceover, and video generation.",
   keywords: ["Instagram Reels", "AI video", "social media", "content creation"],

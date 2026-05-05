@@ -49,6 +49,10 @@ Usage limits are enforced on create/generate, regenerate, render, publish now, s
 Stripe subscription billing connects `CREATOR` and `PRO` plans to hosted Checkout,
 webhook-driven subscription updates, and Stripe Customer Portal management.
 
+Real AI Provider Phase 1 supports `mock` and `openai` modes for creative
+planning, image analysis, and TTS voiceover generation. Mock mode remains the
+local default; OpenAI mode uses only server-side environment variables.
+
 ---
 
 ## 🛠 Tech Stack
@@ -59,9 +63,9 @@ webhook-driven subscription updates, and Stripe Customer Portal management.
 | Backend      | FastAPI, Python 3.12, Pydantic v2, SQLAlchemy 2       |
 | Database     | PostgreSQL 16                                         |
 | Queue/Cache  | Celery + Redis                                        |
-| AI           | Provider-abstracted (OpenAI/Gemini/Anthropic)         |
+| AI           | Provider-abstracted (Mock/OpenAI Phase 1)              |
 | Video        | FFmpeg renderer + AI video provider adapter           |
-| TTS          | Provider-abstracted (ElevenLabs/OpenAI/Google TTS)    |
+| TTS          | Provider-abstracted (Mock/OpenAI Phase 1)              |
 | Storage      | S3-compatible (MinIO for local dev)                   |
 | Instagram    | Meta Graph API v21 — OAuth + Reels publishing         |
 | DevOps       | Docker Compose, GitHub Actions, Ruff, ESLint          |
@@ -113,13 +117,25 @@ See [`.env.example`](./.env.example) for all required variables. Key groups:
 |-------------|--------------------------------------------------------|
 | Database    | `DATABASE_URL`                                         |
 | Cache       | `REDIS_URL`                                            |
-| AI          | `AI_PROVIDER`, `AI_API_KEY`                            |
+| AI          | `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL`, `IMAGE_ANALYSIS_PROVIDER` |
 | Video       | `VIDEO_PROVIDER`, `VIDEO_PROVIDER_API_KEY`             |
-| TTS         | `TTS_PROVIDER`, `TTS_PROVIDER_API_KEY`                 |
+| TTS         | `TTS_PROVIDER`, `TTS_MODEL`, `TTS_VOICE`               |
 | Storage     | `STORAGE_PROVIDER`, `S3_*` variables                   |
 | Instagram   | `META_APP_ID`, `META_APP_SECRET`, `META_REDIRECT_URI`  |
 | Security    | `SECRET_KEY`, `TOKEN_ENCRYPTION_KEY`                   |
 | Billing     | `STRIPE_MODE`, `STRIPE_SECRET_KEY`, `STRIPE_*_PRICE_ID` |
+
+---
+
+## Deployment Readiness
+
+Production and staging deployment steps are maintained in
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md). The current readiness report is
+[`docs/PRODUCTION_DEPLOYMENT_READINESS_REPORT.md`](./docs/PRODUCTION_DEPLOYMENT_READINESS_REPORT.md).
+
+The recommended runtime split is `web`, `api`, `worker-generation`,
+`worker-rendering`, `worker-publishing`, `celery-beat`, Postgres, Redis, and
+public HTTPS object storage for media assets.
 
 ---
 

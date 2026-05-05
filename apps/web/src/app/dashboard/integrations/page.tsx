@@ -3,9 +3,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
-export default function IntegrationsPage() {
+function IntegrationsContent() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -162,5 +162,19 @@ export default function IntegrationsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function IntegrationsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-8 max-w-2xl mx-auto">
+          <div className="card text-center text-gray-400 py-8">Loading integrations...</div>
+        </div>
+      }
+    >
+      <IntegrationsContent />
+    </Suspense>
   );
 }

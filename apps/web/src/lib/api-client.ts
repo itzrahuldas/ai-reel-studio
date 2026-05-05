@@ -70,7 +70,12 @@ export interface ReelVersion {
   video_prompt: string | null;
   estimated_duration: number | null;
   moderation_flags: Record<string, unknown> | null;
+  render_settings: Record<string, unknown> | null;
+  edit_metadata: Record<string, unknown> | null;
+  audio_asset_id: string | null;
+  voiceover_asset_id: string | null;
   video_asset_id: string | null;
+  rendered_asset_id: string | null;
   thumbnail_asset_id: string | null;
   status: ReelProjectStatus;
   approved_at: string | null;
@@ -134,6 +139,9 @@ export interface GenerationJob {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
+  provider: string | null;
+  provider_metadata_json: Record<string, unknown> | null;
+  error_code: string | null;
   retry_count: number;
   created_at: string;
   updated_at: string;
@@ -154,6 +162,20 @@ export interface CreateReelProjectResponse {
   project: ReelProject;
   version: ReelVersion;
   generation_job: GenerationJob;
+}
+
+export interface AIProviderStatus {
+  ai_provider: "mock" | "openai" | string;
+  image_analysis_provider: "mock" | "openai" | string;
+  tts_provider: "mock" | "openai" | string;
+  ai_model: string | null;
+  image_analysis_model: string | null;
+  tts_model: string | null;
+  tts_voice: string | null;
+  configured: boolean;
+  supported: boolean;
+  setup_warning: string | null;
+  mock_mode: boolean;
 }
 
 export interface SocialAccount {
@@ -402,10 +424,15 @@ class ApiClient {
         }
 
         const apiError: ApiError = payload?.error ?? {
-          code: "NETWORK_ERROR",
+          code:
+            detail && typeof detail === "object" && "code" in detail
+              ? String((detail as { code?: unknown }).code)
+              : "NETWORK_ERROR",
           message:
             typeof detail === "string"
               ? detail
+              : detail && typeof detail === "object" && "message" in detail
+              ? String((detail as { message?: unknown }).message)
               : error.message,
           request_id: "unknown",
         };
@@ -517,6 +544,13 @@ class ApiClient {
   async getReelProjectJobs(projectId: string): Promise<GenerationJob[]> {
     const res = await this.client.get<GenerationJob[]>(
       `/api/v1/reel-projects/${projectId}/jobs`
+    );
+    return res.data;
+  }
+
+  async getAIProviderStatus(): Promise<AIProviderStatus> {
+    const res = await this.client.get<AIProviderStatus>(
+      "/api/v1/reel-projects/ai/provider-status"
     );
     return res.data;
   }

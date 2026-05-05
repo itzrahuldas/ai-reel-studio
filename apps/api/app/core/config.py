@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ────────────────────────────────────────────────────────────────
-    APP_ENV: Literal["development", "staging", "production"] = "development"
+    APP_ENV: Literal["development", "test", "staging", "production"] = "development"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
@@ -64,13 +64,20 @@ class Settings(BaseSettings):
     # ── AI Providers ───────────────────────────────────────────────────────
     AI_PROVIDER: Literal["openai", "gemini", "anthropic", "mock"] = "mock"
     AI_API_KEY: str | None = None
-    AI_MODEL: str = "gpt-4o"
+    AI_MODEL: str = "gpt-4.1-mini"
+    IMAGE_ANALYSIS_PROVIDER: Literal["openai", "mock"] = "mock"
+    IMAGE_ANALYSIS_MODEL: str = "gpt-4.1-mini"
+    TTS_PROVIDER: Literal["elevenlabs", "openai", "google", "mock"] = "mock"
+    TTS_MODEL: str = "gpt-4o-mini-tts"
+    TTS_VOICE: str = "coral"
+    AI_REQUEST_TIMEOUT_SECONDS: int = 60
+    AI_MAX_RETRIES: int = 2
+    AI_GENERATION_TEMPERATURE: float = 0.7
     AI_TIMEOUT_SECONDS: int = 60
 
     VIDEO_PROVIDER: Literal["runway", "luma", "stability", "none", "mock"] = "none"
     VIDEO_PROVIDER_API_KEY: str | None = None
 
-    TTS_PROVIDER: Literal["elevenlabs", "openai", "google", "mock"] = "mock"
     TTS_PROVIDER_API_KEY: str | None = None
 
     # ── Meta / Instagram ───────────────────────────────────────────────────

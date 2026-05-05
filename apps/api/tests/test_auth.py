@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -13,9 +14,11 @@ def test_health():
 
 @patch("app.api.v1.routers.auth.register_user", new_callable=AsyncMock)
 def test_register_user(mock_register):
+    user_id = str(uuid4())
+    workspace_id = str(uuid4())
     mock_register.return_value = {
-        "user": {"id": "123", "email": "test@example.com", "is_active": True, "is_verified": False, "full_name": "Test", "created_at": "2026-05-03T10:00:00Z"},
-        "workspace": {"id": "456", "name": "Test Workspace", "slug": "test", "plan": "free", "is_active": True, "created_at": "2026-05-03T10:00:00Z"},
+        "user": {"id": user_id, "email": "test@example.com", "is_active": True, "is_verified": False, "full_name": "Test", "created_at": "2026-05-03T10:00:00Z"},
+        "workspace": {"id": workspace_id, "name": "Test Workspace", "slug": "test", "plan": "free", "is_active": True, "created_at": "2026-05-03T10:00:00Z"},
         "access_token": "fake-token",
         "token_type": "bearer"
     }

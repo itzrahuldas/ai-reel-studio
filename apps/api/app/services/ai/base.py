@@ -1,91 +1,83 @@
-"""
-Abstract base classes for all AI providers.
-Every provider must implement these interfaces.
-"""
+"""Abstract base classes for AI providers."""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from pathlib import Path
 
-from pydantic import BaseModel
-
-# ── Image Analysis ────────────────────────────────────────────────────────────
-
-class ImageAnalysisResult(BaseModel):
-    description: str
-    dominant_colors: list[str] = []
-    detected_objects: list[str] = []
-    scene_type: str = "product"
-    brand_elements: list[str] = []
-    mood: str = "neutral"
+from app.services.ai.schemas import (
+    CreativePlan,
+    ImageAnalysisResult,
+    ModerationFlags,
+    ReelPlanInput,
+    SceneItem,
+    SubtitleLine,
+    TTSResult,
+    TTSVoiceoverResult,
+    VideoGenerationResult,
+)
 
 
 class ImageAnalysisProvider(ABC):
-    """Analyzes an uploaded image to extract context for reel generation."""
+    """Analyzes uploaded images to extract context for reel generation."""
 
     @abstractmethod
-    async def analyze(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> ImageAnalysisResult:
-        """Analyze image and return structured description."""
+    async def analyze_image(self, image_path_or_url: str | None) -> ImageAnalysisResult:
+        """Analyze an image from a local path or URL."""
         ...
 
-
-# ── LLM (Creative Plan Generation) ───────────────────────────────────────────
-
-class SceneItem(BaseModel):
-    scene_number: int
-    duration_seconds: int
-    visual_description: str
-    text_overlay: str | None = None
-    transition: str = "cut"
-
-
-class SubtitleLine(BaseModel):
-    start_seconds: float
-    end_seconds: float
-    text: str
+    async def analyze(
+        self,
+        image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+    ) -> ImageAnalysisResult:
+        """Legacy byte-oriented analysis entry point."""
+        del image_bytes, mime_type
+        return await self.analyze_image(None)
 
 
-class ModerationFlags(BaseModel):
-    contains_harmful_content: bool = False
-    contains_misleading_claims: bool = False
-    contains_restricted_categories: bool = False
-    notes: str = ""
-
-
-class CreativePlan(BaseModel):
-    """Validated output schema for LLM creative plan generation."""
-    hook: str
-    script: str
-    scenes: list[SceneItem]
-    voiceover_text: str
-    subtitle_lines: list[SubtitleLine]
-    caption: str
-    hashtags: list[str]
-    video_prompt: str
-    moderation_flags: ModerationFlags
-    estimated_duration_seconds: int
-
-
-class LLMProvider(ABC):
-    """Generates creative plans, captions, and scripts via LLM."""
+class CreativePlannerProvider(ABC):
+    """Generates a structured creative plan for a Reel."""
 
     @abstractmethod
-    async def generate_creative_plan(self, prompt: str, context: dict[str, Any]) -> CreativePlan:
+    async def generate_reel_plan(self, data: ReelPlanInput) -> CreativePlan:
         """Generate a full creative plan for a reel."""
         ...
 
+
+class LLMProvider(CreativePlannerProvider):
+    """Legacy LLM provider interface kept for compatibility."""
+
+    async def generate_creative_plan(
+        self,
+        prompt: str,
+        context: dict[str, object],
+    ) -> CreativePlan:
+        image_analysis = context.get("image_analysis")
+        plan_input = ReelPlanInput(
+            prompt=prompt,
+            image_analysis=(
+                image_analysis
+                if isinstance(image_analysis, ImageAnalysisResult)
+                else ImageAnalysisResult()
+            ),
+            language=str(context.get("language") or "en"),
+            tone=str(context.get("tone")) if context.get("tone") is not None else None,
+            duration_seconds=int(context.get("duration") or context.get("duration_seconds") or 15),
+            cta_text=str(context.get("cta")) if context.get("cta") is not None else None,
+        )
+        return await self.generate_reel_plan(plan_input)
+
     @abstractmethod
-    async def regenerate_caption(self, script: str, tone: str, cta: str | None, feedback: str | None) -> tuple[str, list[str]]:
+    async def regenerate_caption(
+        self,
+        script: str,
+        tone: str,
+        cta: str | None,
+        feedback: str | None,
+    ) -> tuple[str, list[str]]:
         """Regenerate caption and hashtags for an existing script."""
         ...
-
-
-# ── Video Generation ──────────────────────────────────────────────────────────
-
-class VideoGenerationResult(BaseModel):
-    video_url: str
-    status: str  # "complete" | "failed"
-    generation_id: str
-    duration_seconds: int
 
 
 class VideoGenerationProvider(ABC):
@@ -106,14 +98,6 @@ class VideoGenerationProvider(ABC):
         ...
 
 
-# ── TTS ───────────────────────────────────────────────────────────────────────
-
-class TTSResult(BaseModel):
-    audio_bytes: bytes
-    duration_seconds: float
-    format: str = "mp3"
-
-
 class TTSProvider(ABC):
     """Text-to-speech provider for voiceover generation."""
 
@@ -126,3 +110,50 @@ class TTSProvider(ABC):
         speaking_rate: float = 1.0,
     ) -> TTSResult:
         ...
+
+    async def generate_voiceover(
+        self,
+        text: str,
+        voice: str | None,
+        output_path: str,
+    ) -> TTSVoiceoverResult:
+        """Generate voiceover directly to a path when providers support it."""
+        result = await self.synthesize(text=text, voice_id=voice)
+        Path(output_path).write_bytes(result.audio_bytes)
+        return TTSVoiceoverResult(
+            audio_path=output_path,
+            duration_seconds=result.duration_seconds,
+            provider="mock",
+            format=result.format,
+        )
+
+
+class SubtitleTimingProvider(ABC):
+    """Optional provider for subtitle timing refinement."""
+
+    @abstractmethod
+    async def refine_timings(
+        self,
+        subtitle_lines: list[SubtitleLine],
+        audio_duration_seconds: float,
+    ) -> list[SubtitleLine]:
+        ...
+
+
+__all__ = [
+    "CreativePlan",
+    "CreativePlannerProvider",
+    "ImageAnalysisProvider",
+    "ImageAnalysisResult",
+    "LLMProvider",
+    "ModerationFlags",
+    "ReelPlanInput",
+    "SceneItem",
+    "SubtitleLine",
+    "SubtitleTimingProvider",
+    "TTSProvider",
+    "TTSResult",
+    "TTSVoiceoverResult",
+    "VideoGenerationProvider",
+    "VideoGenerationResult",
+]

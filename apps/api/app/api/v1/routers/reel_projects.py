@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.schemas import (
+    AIProviderStatusResponse,
     CreatePublishJobRequest,
     CreatePublishJobResponse,
     CreateReelProjectRequest,
@@ -26,6 +27,8 @@ from app.schemas.schemas import (
     SchedulePublishJobRequest,
     UpdateReelVersionRequest,
 )
+from app.services.ai.provider_factory import get_provider_status
+from app.services.editor_service import clone_reel_version, get_editor_data, update_reel_version
 from app.services.publish_service import create_publish_job, get_publish_jobs, retry_publish_job
 from app.services.reel_project import (
     create_reel_project,
@@ -68,6 +71,12 @@ async def list_projects(current_user: CurrentUser, db: DbSession) -> Any:
     """List all Reel projects belonging to the user's workspaces."""
     projects = await get_projects(db, current_user.id)
     return [ReelProjectResponse.model_validate(p) for p in projects]
+
+
+@router.get("/ai/provider-status", response_model=AIProviderStatusResponse)
+async def get_ai_provider_status(_current_user: CurrentUser) -> AIProviderStatusResponse:
+    """Return safe AI provider mode/configuration status for UI warnings."""
+    return AIProviderStatusResponse.model_validate(get_provider_status())
 
 
 @router.get("/{project_id}")
@@ -147,8 +156,6 @@ async def list_render_jobs(
 
 
 # ── Editor ────────────────────────────────────────────────────────────────────
-
-from app.services.editor_service import clone_reel_version, get_editor_data, update_reel_version
 
 
 @router.get("/{project_id}/editor", response_model=ReelVersionEditorResponse)
