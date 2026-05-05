@@ -96,3 +96,12 @@ The frontend accepts the payload either as the top-level response body or under 
 Focused backend unit tests cover usage service idempotency, quantity enforcement, workspace subscription creation, publish validation timing, schedule validation timing, and scheduled usage event creation.
 
 The broader endpoint suite still requires local PostgreSQL/Redis services and has older mocked response-shape assumptions. Those failures are tracked separately from this usage enforcement patch.
+
+---
+
+## Stripe Billing Follow-up
+
+Stripe subscription billing is now the live provider path for `CREATOR` and `PRO`.
+Usage enforcement still reads `workspace_subscriptions`, but paid limits apply only
+when subscription status is `active` or `trialing`. Canceled, unpaid, past-due,
+and incomplete subscriptions fall back to `FREE` limits.

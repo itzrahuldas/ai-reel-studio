@@ -132,6 +132,7 @@ class TestGetWorkspacePlan:
         db = AsyncMock()
         sub = MagicMock(spec=WorkspaceSubscription)
         sub.plan_key = "CREATOR"
+        sub.status = SubscriptionStatus.ACTIVE
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = sub

@@ -283,16 +283,29 @@ export type UsageEventType = "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED
 
 export interface PlanDefinition {
   key: PlanKey;
+  plan_key: PlanKey | null;
   name: string;
   ai_generations_per_month: number;
   renders_per_month: number;
   publishes_per_month: number;
   scheduled_publishes_limit: number;
   watermark_enabled: boolean;
+  stripe_price_configured: boolean;
+  checkout_available: boolean;
 }
 
 export interface UsageSummary {
   plan: PlanDefinition;
+  current_plan: PlanKey | null;
+  subscription_plan_key: PlanKey | null;
+  subscription_status: string;
+  provider: string;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  billing_portal_available: boolean;
+  upgrade_available: boolean;
+  stripe_mode: "mock" | "live" | string;
   period_start: string;
   period_end: string;
   ai_generations_used: number;
@@ -303,6 +316,18 @@ export interface UsageSummary {
   publishes_limit: number;
   active_scheduled_publishes: number;
   scheduled_publishes_limit: number;
+}
+
+export interface CheckoutSessionResponse {
+  checkout_url: string;
+  session_id: string;
+  mode: "mock" | "live" | string;
+}
+
+export interface PortalSessionResponse {
+  portal_url: string;
+  mode: "mock" | "live" | string;
+  message: string | null;
 }
 
 /** Error shape returned for HTTP 402 usage limit exceeded */
@@ -673,6 +698,27 @@ class ApiClient {
    */
   async getUsageSummary(): Promise<UsageSummary> {
     const res = await this.client.get<UsageSummary>("/api/v1/billing/usage");
+    return res.data;
+  }
+
+  async createCheckoutSession(planKey: PlanKey): Promise<CheckoutSessionResponse> {
+    const res = await this.client.post<CheckoutSessionResponse>(
+      "/api/v1/billing/checkout",
+      { plan_key: planKey }
+    );
+    return res.data;
+  }
+
+  async createBillingPortalSession(): Promise<PortalSessionResponse> {
+    const res = await this.client.post<PortalSessionResponse>("/api/v1/billing/portal");
+    return res.data;
+  }
+
+  async devMockCheckoutComplete(planKey: PlanKey): Promise<{ message: string }> {
+    const res = await this.client.post<{ message: string }>(
+      "/api/v1/billing/dev/mock-checkout-complete",
+      { plan_key: planKey }
+    );
     return res.data;
   }
 

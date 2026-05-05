@@ -22,6 +22,7 @@
 | `workspace_subscriptions` | Workspace plan and billing period state  |
 | `usage_counters`    | Monthly usage counters per workspace/period    |
 | `usage_events`      | Immutable usage audit and idempotency events   |
+| `stripe_webhook_events` | Stripe webhook audit and idempotency events |
 | `audit_logs`        | Immutable event log for all sensitive actions  |
 
 ---
@@ -216,7 +217,12 @@
 | id                      | UUID PK     |                                        |
 | workspace_id            | UUID FK     | unique workspace subscription row       |
 | plan_key                | VARCHAR(50) | `FREE`, `CREATOR`, or `PRO`             |
-| status                  | VARCHAR(50) | active/canceled/past_due/trialing       |
+| status                  | VARCHAR(50) | active/trialing/canceled/past_due/unpaid/incomplete |
+| provider                | VARCHAR(50) | manual/stripe/mock_stripe               |
+| stripe_customer_id      | VARCHAR(255)| nullable Stripe Customer ID             |
+| stripe_subscription_id  | VARCHAR(255)| nullable Stripe Subscription ID         |
+| stripe_price_id         | VARCHAR(255)| nullable Stripe Price ID                |
+| stripe_checkout_session_id | VARCHAR(255)| last Stripe Checkout Session ID      |
 | current_period_start    | TIMESTAMPTZ | monthly billing period start            |
 | current_period_end      | TIMESTAMPTZ | monthly billing period end              |
 | cancel_at_period_end    | BOOLEAN     | default false                           |
@@ -261,6 +267,25 @@ Indexes:
 
 - `ix_usage_events_workspace_type_job`
 - partial `uq_usage_events_workspace_type_job` on `(workspace_id, event_type, related_job_id)` where `related_job_id IS NOT NULL` when existing data has no duplicates
+
+### `stripe_webhook_events`
+| Column              | Type        | Notes                                  |
+|---------------------|-------------|----------------------------------------|
+| id                  | UUID PK     |                                        |
+| stripe_event_id     | VARCHAR(255)| unique Stripe event ID                 |
+| event_type          | VARCHAR(255)| Stripe event type                      |
+| processing_status   | VARCHAR(50) | processing/processed/ignored/failed    |
+| processed_at        | TIMESTAMPTZ | nullable completion timestamp          |
+| error_message       | TEXT        | sanitized error class or ignore reason |
+| payload_json        | JSONB       | Stripe event payload, no secrets       |
+| created_at          | TIMESTAMPTZ |                                        |
+| updated_at          | TIMESTAMPTZ |                                        |
+
+Indexes:
+
+- `uq_stripe_webhook_events_event_id`
+- `ix_stripe_webhook_events_stripe_event_id`
+- `ix_stripe_webhook_events_event_type`
 
 ---
 

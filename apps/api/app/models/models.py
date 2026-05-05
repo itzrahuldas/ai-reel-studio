@@ -110,6 +110,9 @@ class SubscriptionStatus(enum.StrEnum):
     CANCELED = "canceled"
     PAST_DUE = "past_due"
     TRIALING = "trialing"
+    UNPAID = "unpaid"
+    INCOMPLETE = "incomplete"
+    INCOMPLETE_EXPIRED = "incomplete_expired"
 
 
 class UsageEventType(enum.StrEnum):
@@ -381,6 +384,11 @@ class WorkspaceSubscription(TimestampMixin, Base):
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, unique=True)
     plan_key: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.ACTIVE, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), default="manual", nullable=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), index=True)
     current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -388,6 +396,18 @@ class WorkspaceSubscription(TimestampMixin, Base):
 
     # Relationships
     workspace: Mapped["Workspace"] = relationship(back_populates="subscription")
+
+
+class StripeWebhookEvent(TimestampMixin, Base):
+    __tablename__ = "stripe_webhook_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    stripe_event_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    processing_status: Mapped[str] = mapped_column(String(50), default="processing", nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    payload_json: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class UsageCounter(TimestampMixin, Base):

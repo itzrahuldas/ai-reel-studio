@@ -158,11 +158,65 @@ POST /api/v1/publish-jobs/{id}/cancel        → cancel pending job
 ```
 GET  /api/v1/billing/plans
 GET  /api/v1/billing/usage
+POST /api/v1/billing/checkout
+POST /api/v1/billing/portal
+POST /api/v1/billing/webhooks/stripe
+POST /api/v1/billing/dev/mock-checkout-complete
 POST /api/v1/billing/dev/set-plan
 POST /api/v1/billing/dev/grant-usage
 ```
 
-Dev billing routes return 403 unless `APP_ENV=development`.
+`POST /api/v1/billing/webhooks/stripe` is unauthenticated but verifies the
+`Stripe-Signature` header in live Stripe mode.
+
+Dev billing routes return 403 unless `APP_ENV=development`. Mock Stripe checkout
+also requires `STRIPE_MODE=mock`.
+
+`GET /api/v1/billing/plans` returns plan limits plus:
+
+- `plan_key`
+- `stripe_price_configured`
+- `checkout_available`
+
+`GET /api/v1/billing/usage` returns usage counters plus:
+
+- `current_plan`
+- `subscription_plan_key`
+- `subscription_status`
+- `provider`
+- `current_period_start`
+- `current_period_end`
+- `cancel_at_period_end`
+- `billing_portal_available`
+- `upgrade_available`
+- `stripe_mode`
+
+Create Checkout:
+
+```json
+POST /api/v1/billing/checkout
+Request:
+{ "plan_key": "CREATOR" }
+
+Response 200:
+{
+  "checkout_url": "https://checkout.stripe.com/...",
+  "session_id": "cs_test_...",
+  "mode": "live"
+}
+```
+
+Open Customer Portal:
+
+```json
+POST /api/v1/billing/portal
+Response 200:
+{
+  "portal_url": "https://billing.stripe.com/...",
+  "mode": "live",
+  "message": null
+}
+```
 
 Expensive reel actions can return HTTP 402:
 

@@ -33,6 +33,26 @@
 
 ---
 
+## 1.1 Billing Workflow
+
+```
+Workspace starts on FREE
+  -> user opens /dashboard/billing
+  -> frontend loads GET /api/v1/billing/plans and /usage
+  -> user clicks Upgrade for CREATOR or PRO
+  -> API creates Stripe Checkout Session in subscription mode
+  -> Stripe redirects user through hosted Checkout
+  -> Stripe webhook updates workspace_subscriptions
+  -> UsageService reads the effective plan for limit checks
+  -> user manages payment/cancel/plan changes through Stripe Customer Portal
+```
+
+Paid limits are effective only while subscription status is `active` or
+`trialing`. Canceled, unpaid, past-due, and incomplete subscriptions fall back
+to `FREE` limits for enforcement while preserving billing status for the UI.
+
+---
+
 ## 2. Internal Generation Flow
 
 ```

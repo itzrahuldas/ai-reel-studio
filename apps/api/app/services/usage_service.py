@@ -58,6 +58,25 @@ PLANS = {
     ),
 }
 
+PAID_SUBSCRIPTION_STATUSES = {SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING}
+
+
+def get_effective_plan_key(subscription: WorkspaceSubscription | None) -> PlanKey:
+    if not subscription:
+        return PlanKey.FREE
+
+    try:
+        plan_key = PlanKey(subscription.plan_key)
+    except ValueError:
+        return PlanKey.FREE
+
+    if plan_key == PlanKey.FREE:
+        return PlanKey.FREE
+    if subscription.status in PAID_SUBSCRIPTION_STATUSES:
+        return plan_key
+    return PlanKey.FREE
+
+
 def get_current_period_bounds() -> tuple[datetime, datetime]:
     # For now, simplistic monthly periods from the start of the current month
     now = datetime.now(UTC)
@@ -71,20 +90,39 @@ def get_current_period_bounds() -> tuple[datetime, datetime]:
 
 async def get_workspace_plan(db: AsyncSession, workspace_id: uuid.UUID) -> PlanDefinition:
     stmt = select(WorkspaceSubscription).where(
-        WorkspaceSubscription.workspace_id == workspace_id,
-        WorkspaceSubscription.status == SubscriptionStatus.ACTIVE
+        WorkspaceSubscription.workspace_id == workspace_id
     )
     result = await db.execute(stmt)
     sub = result.scalar_one_or_none()
 
-    plan_key = PlanKey(sub.plan_key) if sub else PlanKey.FREE
+    plan_key = get_effective_plan_key(sub)
     return PLANS[plan_key]
+
+
+async def get_workspace_usage_period_bounds(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> tuple[datetime, datetime]:
+    stmt = select(WorkspaceSubscription).where(
+        WorkspaceSubscription.workspace_id == workspace_id
+    )
+    result = await db.execute(stmt)
+    subscription = result.scalar_one_or_none()
+    if (
+        subscription
+        and subscription.status in PAID_SUBSCRIPTION_STATUSES
+        and subscription.current_period_start
+        and subscription.current_period_end
+    ):
+        return subscription.current_period_start, subscription.current_period_end
+
+    return get_current_period_bounds()
 
 async def get_or_create_current_usage_counter(
     db: AsyncSession,
     workspace_id: uuid.UUID,
 ) -> UsageCounter:
-    start, end = get_current_period_bounds()
+    start, end = await get_workspace_usage_period_bounds(db, workspace_id)
 
     stmt = select(UsageCounter).where(
         UsageCounter.workspace_id == workspace_id,
@@ -131,9 +169,23 @@ async def get_usage_summary(
     plan = await get_workspace_plan(db, workspace_id)
     counter = await get_or_create_current_usage_counter(db, workspace_id)
     active_schedules = await count_active_scheduled_jobs(db, workspace_id)
+    from app.services.stripe_service import build_plan_response, get_billing_status
+
+    billing_status = await get_billing_status(db, workspace_id)
+    plan_response = PlanDefinition.model_validate(build_plan_response(plan.key))
 
     return UsageSummaryResponse(
-        plan=plan,
+        plan=plan_response,
+        current_plan=billing_status["current_plan"],
+        subscription_plan_key=billing_status["subscription_plan_key"],
+        subscription_status=billing_status["subscription_status"],
+        provider=billing_status["provider"],
+        current_period_start=billing_status["current_period_start"] or counter.period_start,
+        current_period_end=billing_status["current_period_end"] or counter.period_end,
+        cancel_at_period_end=billing_status["cancel_at_period_end"],
+        billing_portal_available=billing_status["billing_portal_available"],
+        upgrade_available=billing_status["upgrade_available"],
+        stripe_mode=billing_status["stripe_mode"],
         period_start=counter.period_start,
         period_end=counter.period_end,
         ai_generations_used=counter.ai_generations_used,

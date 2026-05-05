@@ -46,6 +46,9 @@ Publish Job: create IG media container → poll status → publish → store res
 
 Usage limits are enforced on create/generate, regenerate, render, publish now, schedule creation, and scheduled publish execution. Retries use the job ID as the usage idempotency key so the same job is not double-charged.
 
+Stripe subscription billing connects `CREATOR` and `PRO` plans to hosted Checkout,
+webhook-driven subscription updates, and Stripe Customer Portal management.
+
 ---
 
 ## 🛠 Tech Stack
@@ -116,6 +119,7 @@ See [`.env.example`](./.env.example) for all required variables. Key groups:
 | Storage     | `STORAGE_PROVIDER`, `S3_*` variables                   |
 | Instagram   | `META_APP_ID`, `META_APP_SECRET`, `META_REDIRECT_URI`  |
 | Security    | `SECRET_KEY`, `TOKEN_ENCRYPTION_KEY`                   |
+| Billing     | `STRIPE_MODE`, `STRIPE_SECRET_KEY`, `STRIPE_*_PRICE_ID` |
 
 ---
 

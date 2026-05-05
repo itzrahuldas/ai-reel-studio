@@ -81,6 +81,7 @@ docker compose exec api alembic upgrade head
 - [ ] Rate limiting Redis backend configured
 - [ ] Alembic migrations run before deploying new API version
 - [ ] Meta App in Live mode (not Development mode)
+- [ ] Stripe mode is `live`, recurring Price IDs are set, and webhook endpoint is registered
 - [ ] S3 bucket policy configured for IG media access (temporary signed URLs)
 - [ ] Monitoring configured (see below)
 
@@ -108,6 +109,15 @@ See [`.env.example`](../.env.example) for the full list.
 | S3_ACCESS_KEY_ID       | ✅*      | S3 access key                        |
 | S3_SECRET_ACCESS_KEY   | ✅*      | S3 secret key                        |
 | S3_ENDPOINT_URL        | ❌       | Custom S3 endpoint (MinIO, etc.)     |
+| STRIPE_MODE            | ✅       | `mock` for local dev, `live` for production |
+| STRIPE_SECRET_KEY      | ✅*      | Stripe secret key (*live mode)       |
+| STRIPE_WEBHOOK_SECRET  | ✅*      | Stripe webhook signing secret (*live mode) |
+| STRIPE_CREATOR_PRICE_ID| ✅*      | Creator recurring price ID (*live mode) |
+| STRIPE_PRO_PRICE_ID    | ✅*      | Pro recurring price ID (*live mode)  |
+| STRIPE_CUSTOMER_PORTAL_RETURN_URL | ❌ | Customer Portal return URL override |
+| STRIPE_CHECKOUT_SUCCESS_URL | ❌   | Checkout success URL override        |
+| STRIPE_CHECKOUT_CANCEL_URL | ❌    | Checkout cancel URL override         |
+| STRIPE_API_VERSION     | ❌       | Optional pinned Stripe API version   |
 
 ---
 

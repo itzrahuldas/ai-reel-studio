@@ -16,6 +16,20 @@
 
 ---
 
+## 1.1 Stripe Billing Security
+
+- Stripe Checkout and Customer Portal are hosted by Stripe.
+- The app never collects, handles, stores, or logs card data.
+- `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are server-only secrets.
+- Stripe price IDs are represented to the frontend only as configured/unconfigured booleans.
+- `/api/v1/billing/webhooks/stripe` is unauthenticated by design but requires Stripe signature verification in live mode.
+- Duplicate webhook events are idempotent through `stripe_webhook_events.stripe_event_id`.
+- Mock Stripe routes are blocked unless `APP_ENV=development` and `STRIPE_MODE=mock`.
+- Users cannot choose a workspace ID for billing changes; the backend resolves the authenticated user's workspace membership.
+- Dev set-plan routes remain unavailable in production.
+
+---
+
 ## 2. Token Encryption
 
 Instagram access tokens are encrypted before storage:

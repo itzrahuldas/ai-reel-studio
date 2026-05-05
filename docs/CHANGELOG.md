@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Stripe subscription billing with hosted Checkout, Customer Portal, webhook lifecycle processing, and development mock mode.
+- Stripe webhook event idempotency/audit table and Stripe provider fields on workspace subscriptions.
 - Credits, Plans, and Usage Limits hardening with retry-safe usage events.
 - Usage idempotency indexes and publish job payload columns in migration `0007`.
 - Frontend usage-limit handling with billing CTAs for create, regenerate, render, publish, schedule, and editor render flows.

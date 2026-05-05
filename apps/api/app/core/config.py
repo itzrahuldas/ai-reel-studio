@@ -80,6 +80,17 @@ class Settings(BaseSettings):
     META_GRAPH_API_VERSION: str = "v21.0"
     INSTAGRAM_INTEGRATION_MODE: Literal["live", "mock"] = "mock"
 
+    # Stripe Billing
+    STRIPE_MODE: Literal["mock", "live"] = "mock"
+    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_WEBHOOK_SECRET: str | None = None
+    STRIPE_CREATOR_PRICE_ID: str | None = None
+    STRIPE_PRO_PRICE_ID: str | None = None
+    STRIPE_CUSTOMER_PORTAL_RETURN_URL: str | None = None
+    STRIPE_CHECKOUT_SUCCESS_URL: str | None = None
+    STRIPE_CHECKOUT_CANCEL_URL: str | None = None
+    STRIPE_API_VERSION: str | None = None
+
     # ── Public URLs ────────────────────────────────────────────────────────
     API_PUBLIC_BASE_URL: str = "http://localhost:8000"
     STORAGE_PUBLIC_BASE_URL: str | None = None

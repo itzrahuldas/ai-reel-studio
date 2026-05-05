@@ -61,6 +61,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
         workspace_id=workspace.id,
         plan_key="FREE",
         status=SubscriptionStatus.ACTIVE,
+        provider="manual",
         current_period_start=period_start,
         current_period_end=period_end,
         cancel_at_period_end=False,

@@ -320,34 +320,47 @@ class PublishJobResponse(OrmBaseModel):
 
 # ── Billing & Usage Schemas ──────────────────────────────────────────────────
 
-class PlanKey(str, enum.Enum):
+class PlanKey(enum.StrEnum):
     FREE = "FREE"
     CREATOR = "CREATOR"
     PRO = "PRO"
 
 class PlanDefinition(BaseModel):
     key: PlanKey
+    plan_key: PlanKey | None = None
     name: str
     ai_generations_per_month: int
     renders_per_month: int
     publishes_per_month: int
     scheduled_publishes_limit: int
     watermark_enabled: bool
+    stripe_price_configured: bool = False
+    checkout_available: bool = False
 
 class UsageSummaryResponse(BaseModel):
     plan: PlanDefinition
+    current_plan: PlanKey | None = None
+    subscription_plan_key: PlanKey | None = None
+    subscription_status: str = "active"
+    provider: str = "manual"
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    billing_portal_available: bool = False
+    upgrade_available: bool = True
+    stripe_mode: str = "mock"
     period_start: datetime
     period_end: datetime
-    
+
     ai_generations_used: int
     ai_generations_limit: int
-    
+
     renders_used: int
     renders_limit: int
-    
+
     publishes_used: int
     publishes_limit: int
-    
+
     active_scheduled_publishes: int
     scheduled_publishes_limit: int
 
@@ -367,6 +380,26 @@ class SetDevPlanRequest(BaseModel):
 class GrantDevUsageRequest(BaseModel):
     event_type: str  # "AI_GENERATION" | "RENDER" | "PUBLISH" | "SCHEDULED_PUBLISH"
     quantity: int
+
+
+class CheckoutRequest(BaseModel):
+    plan_key: str
+
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+    mode: str
+
+
+class PortalResponse(BaseModel):
+    portal_url: str
+    mode: str
+    message: str | None = None
+
+
+class MockCheckoutCompleteRequest(BaseModel):
+    plan_key: str
 
 
 class CreatePublishJobRequest(BaseModel):

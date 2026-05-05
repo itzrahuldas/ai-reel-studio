@@ -26,6 +26,7 @@ dependencies = [
     "redis>=5.0.0",
     "cryptography>=42.0.0",
     "slowapi>=0.1.9",
+    "stripe>=10.0.0",
     "structlog>=24.1.0",
     "tenacity>=8.3.0",
     "aiofiles>=23.2.1",
