@@ -127,6 +127,7 @@ async def update_reel_version(
             video_prompt=version.video_prompt,
             estimated_duration=version.estimated_duration,
             moderation_flags=version.moderation_flags,
+            voiceover_asset_id=version.voiceover_asset_id,
             audio_asset_id=version.audio_asset_id, # Keep audio if we want, or reset
             # DO NOT copy rendered_asset_id or thumbnail_asset_id
         )
@@ -203,7 +204,9 @@ async def clone_reel_version(
         moderation_flags=version.moderation_flags,
         render_settings=version.render_settings,
         edit_metadata=version.edit_metadata,
-        # Media assets not copied since they belong to a specific render
+        voiceover_asset_id=version.voiceover_asset_id,
+        audio_asset_id=version.audio_asset_id,
+        # Render/video media is not copied because it belongs to a specific render.
     )
     db.add(new_version)
     await db.flush()

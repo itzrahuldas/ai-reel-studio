@@ -100,10 +100,18 @@ See [`.env.example`](../.env.example) for the full list.
 | META_APP_ID            | ✅       | Meta for Developers App ID           |
 | META_APP_SECRET        | ✅       | Meta App Secret                      |
 | META_REDIRECT_URI      | ✅       | OAuth callback URL                   |
-| AI_PROVIDER            | ✅       | openai / gemini / anthropic          |
-| AI_API_KEY             | ✅       | LLM provider API key                 |
+| AI_PROVIDER            | ✅       | `mock` or `openai` for creative planning |
+| AI_API_KEY             | ✅*      | OpenAI API key (*required when any provider is `openai`) |
+| AI_MODEL               | ❌       | OpenAI creative planning model override |
+| IMAGE_ANALYSIS_PROVIDER| ✅       | `mock` or `openai` for image analysis |
+| IMAGE_ANALYSIS_MODEL   | ❌       | OpenAI vision model override         |
+| AI_REQUEST_TIMEOUT_SECONDS | ❌   | Provider request timeout             |
+| AI_MAX_RETRIES         | ❌       | Provider SDK retry count             |
+| AI_GENERATION_TEMPERATURE | ❌    | Creative planning temperature        |
 | VIDEO_PROVIDER         | ❌       | runway / luma / stability / none     |
-| TTS_PROVIDER           | ✅       | elevenlabs / openai / google         |
+| TTS_PROVIDER           | ✅       | `mock` or `openai` for Phase 1 TTS   |
+| TTS_MODEL              | ❌       | OpenAI TTS model override            |
+| TTS_VOICE              | ❌       | OpenAI TTS voice override            |
 | STORAGE_PROVIDER       | ✅       | s3 / local                           |
 | S3_BUCKET              | ✅*      | S3 bucket name (*if s3 provider)     |
 | S3_ACCESS_KEY_ID       | ✅*      | S3 access key                        |

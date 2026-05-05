@@ -117,6 +117,13 @@ class ReelVersionResponse(OrmBaseModel):
     video_prompt: str | None
     estimated_duration: int | None
     moderation_flags: dict | None
+    render_settings: dict | None = None
+    edit_metadata: dict | None = None
+    audio_asset_id: UUID | None = None
+    voiceover_asset_id: UUID | None = None
+    video_asset_id: UUID | None = None
+    rendered_asset_id: UUID | None = None
+    thumbnail_asset_id: UUID | None = None
     status: str
     approved_at: datetime | None
     created_at: datetime
@@ -159,6 +166,20 @@ class CreateReelProjectResponse(BaseModel):
     project: ReelProjectResponse
     version: ReelVersionResponse
     generation_job: "GenerationJobResponse"
+
+
+class AIProviderStatusResponse(BaseModel):
+    ai_provider: str
+    image_analysis_provider: str
+    tts_provider: str
+    ai_model: str | None = None
+    image_analysis_model: str | None = None
+    tts_model: str | None = None
+    tts_voice: str | None = None
+    configured: bool
+    supported: bool
+    setup_warning: str | None = None
+    mock_mode: bool
 
 
 class UpdateCaptionRequest(BaseModel):
@@ -212,6 +233,9 @@ class GenerationJobResponse(OrmBaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
+    provider: str | None = None
+    provider_metadata_json: dict | None = None
+    error_code: str | None = None
     retry_count: int
     created_at: datetime
     updated_at: datetime

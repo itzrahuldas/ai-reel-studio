@@ -112,6 +112,7 @@ async def create_render_job(
             "version_id": str(version.id),
             "duration_seconds": project.duration_seconds,
             "has_source_image": project.source_image_id is not None,
+            "has_voiceover": bool(version.voiceover_asset_id or version.audio_asset_id),
         },
     )
     db.add(render_job)
@@ -245,6 +246,7 @@ async def _run_render_pipeline_inline(
 
             # ── Resolve source image path ─────────────────────────────────────
             image_path = _get_source_image_path(project, version, settings.LOCAL_STORAGE_PATH)
+            audio_path = await _resolve_voiceover_audio_path(db, version)
 
             # ── Prepare output directories ────────────────────────────────────
             renders_dir = Path(settings.LOCAL_STORAGE_PATH) / "renders"
@@ -295,7 +297,7 @@ async def _run_render_pipeline_inline(
                 output_path=output_path,
                 thumbnail_path=thumbnail_path,
                 duration_seconds=duration,
-                audio_path=None,  # TTS audio not implemented yet
+                audio_path=audio_path,
                 srt_path=srt_path,
                 cta_text=cta_text,
             )
@@ -318,6 +320,9 @@ async def _run_render_pipeline_inline(
                     "storage_provider": "local",
                     "storage_path": str(result.output_path),
                     "renderer": result.renderer,
+                    "audio_asset_id": str(version.voiceover_asset_id or version.audio_asset_id)
+                    if audio_path
+                    else None,
                     **result.metadata,
                 },
             )
@@ -407,6 +412,24 @@ async def _run_render_pipeline_inline(
                 await db.commit()
             except Exception:
                 logger.exception("render_pipeline_cleanup_error")
+
+
+async def _resolve_voiceover_audio_path(
+    db: AsyncSession,
+    version: ReelVersion,
+) -> Path | None:
+    """Resolve generated voiceover audio for FFmpeg, if available."""
+    asset_id = version.voiceover_asset_id or version.audio_asset_id
+    if not asset_id:
+        return None
+    asset = await db.get(MediaAsset, asset_id)
+    if not asset:
+        return None
+    audio_path = get_local_storage_path(asset)
+    if audio_path and audio_path.exists():
+        return audio_path
+    logger.warning("voiceover_audio_missing", asset_id=str(asset_id))
+    return None
 
 
 def _get_source_image_path(

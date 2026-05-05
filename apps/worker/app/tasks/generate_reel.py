@@ -8,6 +8,7 @@ generate_video_task) which are wired for future implementation.
 """
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
 import structlog
@@ -78,6 +79,52 @@ class GenerateReelTask(Task):
             attempt=self.request.retries,
             exc_type=type(exc).__name__,
         )
+
+
+@celery_app.task(
+    bind=True,
+    base=GenerateReelTask,
+    queue="generation",
+    max_retries=3,
+    default_retry_delay=30,
+    name="app.tasks.generate_reel.generate_reel_task",
+)
+def generate_reel_task(
+    self: Task,
+    project_id: str,
+    version_id: str,
+    job_id: str,
+) -> dict:
+    """Provider-aware reel generation task."""
+    logger.info(
+        "generate_reel_task.start",
+        project_id=project_id,
+        version_id=version_id,
+        job_id=job_id,
+    )
+    try:
+        from app.services.reel_project import _run_provider_pipeline_inline
+
+        asyncio.run(
+            _run_provider_pipeline_inline(
+                project_id=uuid.UUID(project_id),
+                version_id=uuid.UUID(version_id),
+                job_id=uuid.UUID(job_id),
+            )
+        )
+        logger.info("generate_reel_task.complete", version_id=version_id)
+        return {"status": "complete", "version_id": version_id}
+    except Exception as exc:
+        logger.exception(
+            "generate_reel_task.error",
+            project_id=project_id,
+            job_id=job_id,
+            error_type=type(exc).__name__,
+        )
+        try:
+            raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+        except MaxRetriesExceededError:
+            return {"status": "failed", "error": "AI generation task failed."}
 
 
 @celery_app.task(

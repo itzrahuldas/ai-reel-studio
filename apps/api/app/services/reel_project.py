@@ -3,6 +3,7 @@ Reel project service — create, list, retrieve, and enqueue mock generation.
 """
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -15,6 +16,9 @@ from app.models.models import (
     AuditLog,
     GenerationJob,
     JobStatus,
+    MediaAsset,
+    MediaAssetStatus,
+    MediaAssetType,
     ReelProject,
     ReelProjectStatus,
     ReelVersion,
@@ -22,9 +26,23 @@ from app.models.models import (
     WorkspaceMember,
 )
 from app.schemas.schemas import CreateReelProjectRequest
+from app.services.ai.base import TTSProvider
 from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
+
+
+def _raise_provider_setup_error() -> None:
+    from app.services.ai.provider_factory import validate_provider_configuration
+    from app.services.ai.schemas import AIProviderConfigurationError
+
+    try:
+        validate_provider_configuration()
+    except AIProviderConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
 
 
 # ── Workspace Resolution ──────────────────────────────────────────────────────
@@ -64,6 +82,7 @@ async def create_reel_project(
     inline (sync mode).
     """
     workspace_id = await get_user_workspace_id(db, user_id, data.workspace_id)
+    _raise_provider_setup_error()
 
     # ── 1. ReelProject ────────────────────────────────────────────────────────
     project = ReelProject(
@@ -96,7 +115,7 @@ async def create_reel_project(
     job = GenerationJob(
         project_id=project.id,
         version_id=version.id,
-        job_type="mock_generation",
+        job_type="ai_generation",
         status=JobStatus.QUEUED,
         input_payload=data.model_dump(mode="json"),
     )
@@ -133,15 +152,11 @@ async def create_reel_project(
     # ── 5. Enqueue task or run inline ─────────────────────────────────────────
     mode = settings.GENERATION_MODE
     if mode == "sync":
-        # Run mock pipeline synchronously within the API process
-        await _run_mock_pipeline_inline(
+        # Run provider pipeline synchronously within the API process
+        await _run_provider_pipeline_inline(
             project_id=project.id,
             version_id=version.id,
             job_id=job.id,
-            prompt=project.prompt,
-            tone=project.tone,
-            duration=project.duration_seconds,
-            cta=project.cta_text,
         )
         # Refresh to pick up updated status after inline execution
         await db.refresh(project)
@@ -151,7 +166,7 @@ async def create_reel_project(
         try:
             from app.workers.celery_client import celery_client
             celery_client.send_task(
-                "app.tasks.generate_reel.generate_reel_mock_task",
+                "app.tasks.generate_reel.generate_reel_task",
                 args=[str(project.id), str(version.id), str(job.id)],
                 queue="generation",
             )
@@ -171,6 +186,262 @@ async def create_reel_project(
 
 
 # ── Sync inline pipeline (no Celery) ─────────────────────────────────────────
+
+async def _resolve_source_image_path(
+    db: AsyncSession,
+    project: ReelProject,
+) -> Path | None:
+    """Resolve the local source image path when one is available."""
+    if not project.source_image_id:
+        return None
+    asset = await db.get(MediaAsset, project.source_image_id)
+    if not asset or asset.workspace_id != project.workspace_id:
+        return None
+    from app.services.render_service import get_local_storage_path
+
+    local_path = get_local_storage_path(asset)
+    if local_path and local_path.exists():
+        return local_path
+    return None
+
+
+async def _generate_voiceover_asset(
+    db: AsyncSession,
+    project: ReelProject,
+    version: ReelVersion,
+    text: str,
+    provider: TTSProvider,
+    provider_name: str,
+) -> tuple[MediaAsset, float]:
+    """Generate voiceover audio and persist it as a MediaAsset."""
+    voiceovers_dir = Path(settings.LOCAL_STORAGE_PATH) / "voiceovers"
+    voiceovers_dir.mkdir(parents=True, exist_ok=True)
+    extension = "mp3" if provider_name == "openai" else "wav"
+    filename = f"voiceover_{version.id}.{extension}"
+    output_path = voiceovers_dir / filename
+    result = await provider.generate_voiceover(
+        text=text,
+        voice=settings.TTS_VOICE or None,
+        output_path=str(output_path),
+    )
+    file_size = output_path.stat().st_size if output_path.exists() else 0
+    asset = MediaAsset(
+        workspace_id=project.workspace_id,
+        project_id=project.id,
+        version_id=version.id,
+        asset_type=MediaAssetType.AUDIO,
+        s3_key=f"voiceovers/{filename}",
+        s3_bucket="local",
+        filename=filename,
+        mime_type="audio/mpeg" if result.format == "mp3" else "audio/wav",
+        file_size=file_size,
+        status=MediaAssetStatus.READY if file_size > 0 else MediaAssetStatus.ERROR,
+        metadata_={
+            "storage_provider": "local",
+            "provider": result.provider,
+            "duration_seconds": result.duration_seconds,
+            "format": result.format,
+        },
+    )
+    db.add(asset)
+    await db.flush()
+    result.audio_asset_id = str(asset.id)
+    return asset, result.duration_seconds
+
+
+async def _run_provider_pipeline_inline(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> None:
+    """Run the provider-backed generation pipeline inline."""
+    from datetime import UTC, datetime
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.ai.openai_provider import sanitize_provider_error
+    from app.services.ai.provider_factory import get_provider_bundle
+    from app.services.ai.schemas import (
+        AIProviderRuntimeError,
+        ReelPlanInput,
+        align_subtitle_lines,
+    )
+
+    async with AsyncSessionLocal() as db:
+        try:
+            job = await db.get(GenerationJob, job_id)
+            project = await db.get(ReelProject, project_id)
+            version = await db.get(ReelVersion, version_id)
+
+            if not job or not project or not version:
+                logger.error("provider_pipeline_missing_records", project_id=str(project_id))
+                return
+
+            if job.status == JobStatus.COMPLETE:
+                logger.info("provider_pipeline_already_complete", job_id=str(job_id))
+                return
+
+            bundle = get_provider_bundle()
+            warnings: list[str] = []
+
+            job.status = JobStatus.RUNNING
+            job.started_at = datetime.now(UTC)
+            job.provider = bundle.ai_provider
+            project.status = ReelProjectStatus.SCRIPT_GENERATING
+            await db.commit()
+
+            source_image_path = await _resolve_source_image_path(db, project)
+            image_analysis = await bundle.image_analysis.analyze_image(
+                str(source_image_path) if source_image_path else None
+            )
+
+            plan = await bundle.creative_planner.generate_reel_plan(
+                ReelPlanInput(
+                    prompt=project.prompt,
+                    image_analysis=image_analysis,
+                    language=project.language,
+                    tone=project.tone,
+                    duration_seconds=project.duration_seconds,
+                    cta_text=project.cta_text,
+                )
+            )
+
+            voiceover_asset = None
+            tts_status = "missing"
+            tts_error = None
+            tts_duration = None
+            if plan.voiceover_text:
+                try:
+                    voiceover_asset, tts_duration = await _generate_voiceover_asset(
+                        db=db,
+                        project=project,
+                        version=version,
+                        text=plan.voiceover_text,
+                        provider=bundle.tts,
+                        provider_name=bundle.tts_provider,
+                    )
+                    tts_status = "generated"
+                    plan.subtitle_lines = align_subtitle_lines(
+                        plan.subtitle_lines,
+                        float(tts_duration),
+                    )
+                except Exception as exc:
+                    tts_error = sanitize_provider_error(exc)
+                    if settings.APP_ENV == "production" and bundle.tts_provider == "openai":
+                        raise AIProviderRuntimeError(tts_error, code="TTS_FAILED") from exc
+                    warnings.append(tts_error)
+                    tts_status = "failed"
+
+            provider_metadata = {
+                "ai_provider": bundle.ai_provider,
+                "image_analysis_provider": bundle.image_analysis_provider,
+                "tts_provider": bundle.tts_provider,
+                "image_analysis": image_analysis.model_dump(mode="json"),
+                "tts": {
+                    "status": tts_status,
+                    "asset_id": str(voiceover_asset.id) if voiceover_asset else None,
+                    "duration_seconds": tts_duration,
+                    "error": tts_error,
+                },
+                "warnings": warnings,
+                "usage_note": (
+                    "AI_GENERATION includes planning, image analysis, subtitles, "
+                    "and TTS in Phase 1."
+                ),
+            }
+
+            version.hook = plan.hook
+            version.script = plan.script
+            version.scenes = [scene.model_dump(mode="json") for scene in plan.scenes]
+            version.voiceover_text = plan.voiceover_text
+            version.subtitle_lines = [
+                subtitle.model_dump(mode="json") for subtitle in plan.subtitle_lines
+            ]
+            version.caption = plan.caption
+            version.hashtags = plan.hashtags
+            version.video_prompt = plan.video_prompt
+            version.estimated_duration = plan.estimated_duration_seconds
+            version.moderation_flags = plan.moderation_flags.model_dump(mode="json")
+            version.voiceover_asset_id = voiceover_asset.id if voiceover_asset else None
+            version.audio_asset_id = (
+                voiceover_asset.id if voiceover_asset else version.audio_asset_id
+            )
+            version.edit_metadata = {
+                **(version.edit_metadata or {}),
+                "ai_provider": bundle.ai_provider,
+                "image_analysis": image_analysis.model_dump(mode="json"),
+                "voiceover_status": tts_status,
+                "generation_warnings": warnings,
+            }
+            version.status = ReelProjectStatus.READY_FOR_REVIEW
+
+            job.status = JobStatus.COMPLETE
+            job.completed_at = datetime.now(UTC)
+            job.output_payload = {
+                "creative_plan": plan.model_dump(mode="json"),
+                **provider_metadata,
+            }
+            job.provider_metadata_json = provider_metadata
+            job.error_code = None
+
+            project.status = ReelProjectStatus.READY_FOR_REVIEW
+
+            audit = AuditLog(
+                action="reel_generation_completed",
+                workspace_id=project.workspace_id,
+                user_id=project.created_by,
+                resource_type="generation_job",
+                resource_id=job.id,
+                metadata_={
+                    "version_id": str(version_id),
+                    "provider": bundle.ai_provider,
+                    "tts_status": tts_status,
+                    "mode": "sync",
+                },
+            )
+            db.add(audit)
+            await db.commit()
+
+            logger.info(
+                "provider_pipeline_complete",
+                project_id=str(project_id),
+                provider=bundle.ai_provider,
+                tts_status=tts_status,
+            )
+
+        except Exception as exc:
+            safe_error = sanitize_provider_error(exc)
+            error_code = getattr(exc, "code", "AI_PROVIDER_ERROR")
+            logger.exception(
+                "provider_pipeline_error",
+                project_id=str(project_id),
+                error_type=type(exc).__name__,
+            )
+            try:
+                job = await db.get(GenerationJob, job_id)
+                project = await db.get(ReelProject, project_id)
+                version = await db.get(ReelVersion, version_id)
+                if job:
+                    job.status = JobStatus.FAILED
+                    job.error_message = safe_error
+                    job.error_code = error_code
+                    job.completed_at = datetime.now(UTC)
+                    job.provider_metadata_json = {
+                        "error_code": error_code,
+                        "error_type": type(exc).__name__,
+                    }
+                if project:
+                    project.status = ReelProjectStatus.FAILED_SCRIPT
+                if version:
+                    version.status = ReelProjectStatus.FAILED_SCRIPT
+                    version.edit_metadata = {
+                        **(version.edit_metadata or {}),
+                        "provider_error": safe_error,
+                        "provider_error_code": error_code,
+                    }
+                await db.commit()
+            except Exception:
+                logger.exception("provider_pipeline_cleanup_error")
+
 
 async def _run_mock_pipeline_inline(
     project_id: uuid.UUID,
@@ -268,6 +539,7 @@ async def regenerate_reel_project(
 ) -> tuple[ReelVersion, GenerationJob]:
     """Create a new version + job and enqueue/run mock generation."""
     project = await get_project_by_id(db, user_id, project_id)
+    _raise_provider_setup_error()
 
     # Count existing versions
     stmt = select(ReelVersion).where(ReelVersion.project_id == project_id)
@@ -288,7 +560,7 @@ async def regenerate_reel_project(
     job = GenerationJob(
         project_id=project.id,
         version_id=version.id,
-        job_type="mock_generation",
+        job_type="ai_generation",
         status=JobStatus.QUEUED,
         input_payload={"regenerate": True, "version_number": new_version_number},
     )
@@ -321,14 +593,10 @@ async def regenerate_reel_project(
 
     mode = settings.GENERATION_MODE
     if mode == "sync":
-        await _run_mock_pipeline_inline(
+        await _run_provider_pipeline_inline(
             project_id=project.id,
             version_id=version.id,
             job_id=job.id,
-            prompt=project.prompt,
-            tone=project.tone,
-            duration=project.duration_seconds,
-            cta=project.cta_text,
         )
         await db.refresh(version)
         await db.refresh(job)
@@ -336,7 +604,7 @@ async def regenerate_reel_project(
         try:
             from app.workers.celery_client import celery_client
             celery_client.send_task(
-                "app.tasks.generate_reel.generate_reel_mock_task",
+                "app.tasks.generate_reel.generate_reel_task",
                 args=[str(project.id), str(version.id), str(job.id)],
                 queue="generation",
             )

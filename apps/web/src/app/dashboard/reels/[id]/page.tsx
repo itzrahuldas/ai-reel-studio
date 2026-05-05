@@ -138,8 +138,56 @@ function RenderTimeline({ jobs }: { jobs: RenderJob[] }) {
 }
 
 function VersionContent({ version }: { version: ReelVersion }) {
+  const metadata = version.edit_metadata ?? {};
+  const imageAnalysis = metadata.image_analysis as
+    | { description?: string; recommended_visual_direction?: string; style?: string }
+    | undefined;
+  const voiceoverStatus = metadata.voiceover_status as string | undefined;
+  const warnings = Array.isArray(metadata.generation_warnings)
+    ? (metadata.generation_warnings as string[])
+    : [];
+
   return (
     <>
+      {(metadata.ai_provider || imageAnalysis || voiceoverStatus || warnings.length > 0) && (
+        <SectionCard title="AI Provider">
+          <div className="space-y-3 text-sm">
+            {metadata.ai_provider && (
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Mode</span>
+                <span className="rounded-md bg-gray-800 px-2 py-1 text-xs uppercase text-violet-300">
+                  {String(metadata.ai_provider)}
+                </span>
+              </div>
+            )}
+            {imageAnalysis?.description && (
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Image analysis</p>
+                <p className="text-gray-300 leading-relaxed">{imageAnalysis.description}</p>
+              </div>
+            )}
+            {imageAnalysis?.recommended_visual_direction && (
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Visual direction</p>
+                <p className="text-gray-400 leading-relaxed">
+                  {imageAnalysis.recommended_visual_direction}
+                </p>
+              </div>
+            )}
+            {voiceoverStatus && (
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Voiceover</span>
+                <span className="text-gray-300 capitalize">{voiceoverStatus}</span>
+              </div>
+            )}
+            {warnings.map((warning, idx) => (
+              <p key={idx} className="text-xs text-amber-300">
+                {warning}
+              </p>
+            ))}
+          </div>
+        </SectionCard>
+      )}
       {version.hook && (
         <SectionCard title="Hook">
           <p className="text-white font-medium text-lg">{version.hook}</p>
@@ -300,6 +348,13 @@ export default function ReelDetailPage() {
     queryKey: ["media-asset", version?.thumbnail_asset_id],
     queryFn: () => apiClient.getMediaAsset(version!.thumbnail_asset_id!),
     enabled: !!version?.thumbnail_asset_id,
+  });
+
+  const voiceoverAssetId = version?.voiceover_asset_id ?? version?.audio_asset_id;
+  const { data: voiceoverAsset } = useQuery({
+    queryKey: ["media-asset", voiceoverAssetId],
+    queryFn: () => apiClient.getMediaAsset(voiceoverAssetId!),
+    enabled: !!voiceoverAssetId,
   });
 
   const renderMutation = useMutation({
@@ -556,6 +611,18 @@ export default function ReelDetailPage() {
                 </div>
               )}
             </div>
+          </SectionCard>
+
+          <SectionCard title="Voiceover">
+            {voiceoverAsset?.url ? (
+              <audio src={voiceoverAsset.url} controls className="w-full" />
+            ) : (
+              <p className="text-sm text-gray-500">
+                {version?.edit_metadata?.voiceover_status === "failed"
+                  ? "Voiceover generation failed."
+                  : "No generated voiceover audio is attached."}
+              </p>
+            )}
           </SectionCard>
 
           {/* Publishing Section */}

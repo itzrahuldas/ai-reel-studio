@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
 import { apiClient, isUsageLimitError } from "@/lib/api-client";
-import type { ApiError, UsageLimitError } from "@/lib/api-client";
+import type { AIProviderStatus, ApiError, UsageLimitError } from "@/lib/api-client";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,7 @@ export default function CreateReelPage() {
   const [submitting, setSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [usageLimitError, setUsageLimitError] = useState<UsageLimitError | null>(null);
+  const [providerStatus, setProviderStatus] = useState<AIProviderStatus | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +72,9 @@ export default function CreateReelPage() {
   useEffect(() => {
     if (!localStorage.getItem("access_token")) {
       router.replace("/login");
+      return;
     }
+    apiClient.getAIProviderStatus().then(setProviderStatus).catch(() => undefined);
   }, [router]);
 
   const handleImageSelect = useCallback(
@@ -136,6 +139,27 @@ export default function CreateReelPage() {
         <p className="text-gray-400 mt-1">
           Describe your idea. AI will generate script, storyboard and caption.
         </p>
+        {providerStatus && (
+          <div className="mt-4 rounded-lg border border-gray-800 bg-gray-900/70 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-gray-300">
+              <span className="text-gray-500">AI mode</span>
+              <span className="rounded-md bg-gray-800 px-2 py-1 text-xs uppercase tracking-wide text-violet-300">
+                {providerStatus.ai_provider}
+              </span>
+              <span className="text-gray-500">Vision</span>
+              <span className="rounded-md bg-gray-800 px-2 py-1 text-xs uppercase tracking-wide text-cyan-300">
+                {providerStatus.image_analysis_provider}
+              </span>
+              <span className="text-gray-500">TTS</span>
+              <span className="rounded-md bg-gray-800 px-2 py-1 text-xs uppercase tracking-wide text-emerald-300">
+                {providerStatus.tts_provider}
+              </span>
+            </div>
+            {providerStatus.setup_warning && (
+              <p className="mt-2 text-xs text-amber-300">{providerStatus.setup_warning}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">

@@ -30,6 +30,22 @@
 
 ---
 
+## 1.2 AI Provider Security
+
+- `AI_API_KEY` is a server-only secret and is never returned to the frontend.
+- Mock AI providers remain the default for local development.
+- If any OpenAI provider is selected without `AI_API_KEY`, the API returns a
+  setup error before usage is consumed.
+- Provider errors are sanitized before being stored on generation jobs or shown
+  in the UI.
+- Full user prompts and uploaded image contents are not logged by provider code.
+- TTS audio is stored as a media asset; generated audio/video files are not
+  committed to the repository.
+- Phase 1 does not handle card data, Stripe Connect, or real AI video provider
+  credentials.
+
+---
+
 ## 2. Token Encryption
 
 Instagram access tokens are encrypted before storage:

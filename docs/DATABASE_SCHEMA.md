@@ -134,6 +134,7 @@
 | video_prompt         | TEXT        | AI video generation prompt              |
 | estimated_duration   | INTEGER     | seconds                                 |
 | moderation_flags     | JSONB       | any content flags from AI               |
+| voiceover_asset_id   | UUID FK     | → media_assets.id NULLABLE, generated TTS voiceover |
 | audio_asset_id       | UUID FK     | → media_assets.id NULLABLE              |
 | video_asset_id       | UUID FK     | → media_assets.id NULLABLE              |
 | rendered_asset_id    | UUID FK     | → media_assets.id NULLABLE              |
@@ -160,6 +161,9 @@
 | retry_count     | INTEGER     | default 0                               |
 | input_payload   | JSONB       | full input snapshot                     |
 | output_payload  | JSONB       | full output snapshot                    |
+| provider        | VARCHAR(50) | mock/openai provider used for generation |
+| provider_metadata_json | JSONB | safe provider metadata, no secrets       |
+| error_code      | VARCHAR(100)| sanitized machine-readable failure code |
 | created_at      | TIMESTAMPTZ |                                         |
 | updated_at      | TIMESTAMPTZ |                                         |
 
@@ -306,7 +310,7 @@ users ────────────────────────�
                                                    social_accounts
 
 media_assets ─── reel_projects (source_image_id)
-             └── reel_versions (audio_asset_id, video_asset_id,
+             └── reel_versions (voiceover_asset_id, audio_asset_id, video_asset_id,
                                 rendered_asset_id, thumbnail_asset_id)
 ```
 
