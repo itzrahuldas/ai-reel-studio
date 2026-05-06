@@ -10,6 +10,8 @@ from app.models.models import (
     User,
     Workspace,
     WorkspaceMember,
+    WorkspaceMemberRole,
+    WorkspacePlan,
     WorkspaceSubscription,
 )
 from app.schemas.schemas import AuthResponse, UserCreate, UserResponse, WorkspaceResponse
@@ -25,7 +27,7 @@ async def create_default_workspace(db: AsyncSession, user: User) -> Workspace:
     workspace = Workspace(
         name=f"{user.full_name or 'My'} Workspace",
         slug=base_slug,
-        plan="free",
+        plan=WorkspacePlan.FREE,
         is_active=True,
         owner_id=user.id,
     )
@@ -35,7 +37,7 @@ async def create_default_workspace(db: AsyncSession, user: User) -> Workspace:
     member = WorkspaceMember(
         user_id=user.id,
         workspace_id=workspace.id,
-        role="owner",
+        role=WorkspaceMemberRole.OWNER,
     )
     db.add(member)
 
