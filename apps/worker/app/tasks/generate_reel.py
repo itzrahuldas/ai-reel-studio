@@ -15,6 +15,7 @@ import structlog
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
 
+from app.core.config import settings
 from app.main import celery_app  # noqa: E402 — worker's own Celery app
 
 logger = structlog.get_logger(__name__)
@@ -22,13 +23,23 @@ logger = structlog.get_logger(__name__)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_sync_db():
+def _safe_error_message(exc: Exception, max_length: int = 500) -> str:
+    """Return a bounded single-line error message for worker logs."""
+    message = str(exc) or type(exc).__name__
+    message = message.replace("\r", " ").replace("\n", " ")
+    if len(message) > max_length:
+        return f"{message[:max_length]}..."
+    return message
+
+
+def _get_sync_db() -> object:
     """
     Create a synchronous SQLAlchemy session for use inside Celery tasks.
     Celery tasks run in a synchronous context; we cannot use asyncpg here.
     We use psycopg2 (sync) via a separate engine.
     """
     import os
+
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -39,8 +50,8 @@ def _get_sync_db():
     )
     sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
     engine = create_engine(sync_url, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    return Session()
+    session_factory = sessionmaker(bind=engine)
+    return session_factory()
 
 
 # ── Main Mock Generation Task ─────────────────────────────────────────────────
@@ -54,24 +65,24 @@ class GenerateReelTask(Task):
         self,
         exc: Exception,
         task_id: str,
-        args: tuple,
-        kwargs: dict,
-        einfo: object,
+        _args: tuple,
+        _kwargs: dict,
+        _einfo: object,
     ) -> None:
         logger.error(
             "generate_reel_task.failed",
             task_id=task_id,
             exc_type=type(exc).__name__,
-            exc_message=str(exc),
+            exc_message=_safe_error_message(exc),
         )
 
     def on_retry(
         self,
         exc: Exception,
         task_id: str,
-        args: tuple,
-        kwargs: dict,
-        einfo: object,
+        _args: tuple,
+        _kwargs: dict,
+        _einfo: object,
     ) -> None:
         logger.warning(
             "generate_reel_task.retry",
@@ -119,7 +130,9 @@ def generate_reel_task(
             "generate_reel_task.error",
             project_id=project_id,
             job_id=job_id,
+            provider=settings.AI_PROVIDER,
             error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
         )
         try:
             raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
@@ -274,7 +287,9 @@ def generate_reel_mock_task(
             "generate_reel_mock_task.error",
             project_id=project_id,
             job_id=job_id,
-            error=str(exc),
+            provider="mock",
+            exc_type=type(exc).__name__,
+            error=_safe_error_message(exc),
         )
         try:
             # Best-effort status update — may fail if DB is also down
@@ -298,7 +313,7 @@ def generate_reel_mock_task(
                 "generate_reel_mock_task.max_retries_exceeded",
                 job_id=job_id,
             )
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "error": _safe_error_message(exc)}
     finally:
         db.close()
 
@@ -312,7 +327,7 @@ def generate_reel_mock_task(
     default_retry_delay=30,
     name="app.tasks.generate_reel.generate_creative_plan_task",
 )
-def generate_creative_plan_task(self: Task, job_id: str) -> dict:
+def generate_creative_plan_task(_self: Task, job_id: str) -> dict:
     """
     Legacy task alias — routes to generate_reel_mock_task for MVP.
     TODO: Implement full AI pipeline (real LLM, vision, TTS).
@@ -328,7 +343,7 @@ def generate_creative_plan_task(self: Task, job_id: str) -> dict:
     default_retry_delay=30,
     name="app.tasks.generate_reel.generate_audio_task",
 )
-def generate_audio_task(self: Task, version_id: str) -> dict:
+def generate_audio_task(_self: Task, version_id: str) -> dict:
     """
     TTS audio generation task — stub for future implementation.
     TODO: Implement TTSProvider.synthesize() and upload to S3.
@@ -344,7 +359,7 @@ def generate_audio_task(self: Task, version_id: str) -> dict:
     default_retry_delay=60,
     name="app.tasks.generate_reel.generate_video_task",
 )
-def generate_video_task(self: Task, version_id: str) -> dict:
+def generate_video_task(_self: Task, version_id: str) -> dict:
     """
     AI video generation task — stub for future implementation.
     TODO: Implement VideoProvider.generate() and upload to S3.

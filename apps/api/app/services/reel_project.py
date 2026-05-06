@@ -266,6 +266,7 @@ async def _run_provider_pipeline_inline(
         align_subtitle_lines,
     )
 
+    bundle = None
     async with AsyncSessionLocal() as db:
         try:
             job = await db.get(GenerationJob, job_id)
@@ -411,10 +412,14 @@ async def _run_provider_pipeline_inline(
         except Exception as exc:
             safe_error = sanitize_provider_error(exc)
             error_code = getattr(exc, "code", "AI_PROVIDER_ERROR")
+            provider = getattr(bundle, "ai_provider", settings.AI_PROVIDER)
             logger.exception(
                 "provider_pipeline_error",
                 project_id=str(project_id),
+                job_id=str(job_id),
+                provider=provider,
                 error_type=type(exc).__name__,
+                error=safe_error,
             )
             try:
                 job = await db.get(GenerationJob, job_id)

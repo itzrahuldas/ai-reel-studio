@@ -84,7 +84,7 @@ services:
       celery -A app.main:celery_app worker
       --loglevel=info
       --concurrency=${GENERATION_WORKER_CONCURRENCY:-2}
-      --queues=generation,default
+      --queues=generation
 
   worker-rendering:
     <<: *worker-base
@@ -100,7 +100,7 @@ services:
       celery -A app.main:celery_app worker
       --loglevel=info
       --concurrency=${PUBLISH_WORKER_CONCURRENCY:-2}
-      --queues=publishing
+      --queues=publishing,scheduler
 
   celery-beat:
     <<: *worker-base
