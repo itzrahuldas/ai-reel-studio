@@ -61,7 +61,7 @@ async def run_scan_scheduled_jobs() -> None:
                     await db.commit()
                 else:
                     # Sync mode for local testing
-                    from apps.worker.app.tasks.publish_reel import run_publish_pipeline
+                    from app.tasks.publish_reel import run_publish_pipeline
                     await run_publish_pipeline(db, str(job.id))
 
             except Exception as e:
