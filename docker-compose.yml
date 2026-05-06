@@ -145,6 +145,8 @@ services:
     env_file:
       - .env
     environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
       NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
       - "3000:3000"
@@ -154,6 +156,18 @@ services:
       - ./apps/web:/app
       - /app/node_modules
       - /app/.next
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode >= 200 && r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:
