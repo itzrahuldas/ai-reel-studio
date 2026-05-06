@@ -1,7 +1,7 @@
 """Add scheduling publish job fields
 
-Revision ID: 0005_add_scheduling_publish_job_fields
-Revises: 0004_add_reel_version_editor_fields
+Revision ID: 0005_scheduling_fields
+Revises: 0004_reel_editor_fields
 Create Date: 2026-05-03 23:45:00.000000
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0005_add_scheduling_publish_job_fields'
-down_revision: Union[str, None] = '0004_add_reel_version_editor_fields'
+revision: str = '0005_scheduling_fields'
+down_revision: Union[str, None] = '0004_reel_editor_fields'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
