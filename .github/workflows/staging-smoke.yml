@@ -1,0 +1,55 @@
+name: Staging Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Deployed API base URL, for example https://api-staging.example.com"
+        required: true
+        type: string
+      frontend_base_url:
+        description: "Deployed frontend base URL"
+        required: false
+        type: string
+      create_reel:
+        description: "Create and render a mock reel"
+        required: true
+        default: false
+        type: boolean
+      test_stripe_mock:
+        description: "Run development-only mock Stripe checkout"
+        required: true
+        default: false
+        type: boolean
+      test_instagram_mock:
+        description: "Run development-only mock Instagram publish"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  staging-smoke:
+    name: Run staging smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run smoke test
+        env:
+          SMOKE_API_BASE_URL: ${{ inputs.api_base_url }}
+          SMOKE_FRONTEND_BASE_URL: ${{ inputs.frontend_base_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TIMEOUT_SECONDS: "180"
+          SMOKE_CREATE_REEL: ${{ inputs.create_reel }}
+          SMOKE_TEST_STRIPE_MOCK: ${{ inputs.test_stripe_mock }}
+          SMOKE_TEST_INSTAGRAM_MOCK: ${{ inputs.test_instagram_mock }}
+        run: python scripts/staging_smoke_test.py

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Staging smoke test script, manual GitHub Actions smoke workflow, and API
+  liveness/readiness/config health endpoints for deployment verification.
 - Real AI Provider Integration Phase 1 with mock/OpenAI creative planning, image analysis, TTS voiceover generation, timed subtitle alignment, and FFmpeg voiceover rendering.
 - Stripe subscription billing with hosted Checkout, Customer Portal, webhook lifecycle processing, and development mock mode.
 - Stripe webhook event idempotency/audit table and Stripe provider fields on workspace subscriptions.

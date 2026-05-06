@@ -16,6 +16,7 @@
 - [x] CI provides Postgres and Redis services.
 - [x] CI runs backend Ruff, Alembic upgrade/history/heads, pytest, and worker import validation.
 - [x] CI runs frontend install, lint, typecheck, and build.
+- [x] Manual staging smoke workflow is available through GitHub Actions.
 - [ ] Confirm the updated CI workflow passes on GitHub after push.
 
 ## Staging Launch Gates
@@ -24,6 +25,7 @@
 - [ ] Configure `APP_ENV=staging`.
 - [ ] Configure exact `ALLOWED_ORIGINS` and `FRONTEND_URL`.
 - [ ] Configure `API_PUBLIC_BASE_URL` and `STORAGE_PUBLIC_BASE_URL` as HTTPS URLs.
+- [ ] Verify `/health`, `/api/v1/health/readiness`, and `/api/v1/health/config`.
 - [ ] Run `api`, `worker-generation`, `worker-rendering`, `worker-publishing`, and `celery-beat`.
 - [ ] Verify Redis queue connectivity and Celery Beat schedule.
 - [ ] Verify FFmpeg is installed in the rendering runtime.
@@ -33,6 +35,8 @@
 - [ ] Configure Meta OAuth callback for the staging/test app.
 - [ ] Configure OpenAI keys if testing `openai` provider mode.
 - [ ] Run a full test account flow: register, create, render, connect Instagram, publish mock/test, upgrade mock/test billing.
+- [ ] Run `python scripts/staging_smoke_test.py` against the deployed API/frontend.
+- [ ] Run the manual `Staging Smoke` GitHub Actions workflow with the same staging URLs.
 
 ## Production Launch Gates
 
