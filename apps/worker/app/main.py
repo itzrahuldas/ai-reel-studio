@@ -11,6 +11,11 @@ from app.core.logging import configure_logging
 
 configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
 
+GENERATION_QUEUE = "generation"
+RENDERING_QUEUE = "rendering"
+PUBLISHING_QUEUE = "publishing"
+SCHEDULER_QUEUE = "scheduler"
+
 celery_app = Celery(
     "ai_reel_studio",
     broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
@@ -33,9 +38,10 @@ celery_app.conf.update(
     task_acks_late=True,           # Only ack after task completes (safer)
     worker_prefetch_multiplier=1,  # One task at a time per worker slot
     task_routes={
-        "app.tasks.generate_reel.*": {"queue": "generation"},
-        "app.tasks.render_reel.*": {"queue": "rendering"},
-        "app.tasks.publish_reel.*": {"queue": "publishing"},
+        "app.tasks.generate_reel.*": {"queue": GENERATION_QUEUE},
+        "app.tasks.render_reel.*": {"queue": RENDERING_QUEUE},
+        "app.tasks.publish_reel.*": {"queue": PUBLISHING_QUEUE},
+        "app.tasks.scheduler.*": {"queue": SCHEDULER_QUEUE},
     },
     task_default_queue="default",
     task_default_retry_delay=30,    # 30 seconds between retries
@@ -44,6 +50,7 @@ celery_app.conf.update(
         "scan-scheduled-publish-jobs-every-minute": {
             "task": "app.tasks.scheduler.scan_scheduled_publish_jobs",
             "schedule": 60.0,  # every 60 seconds
+            "options": {"queue": SCHEDULER_QUEUE},
         },
     },
 )

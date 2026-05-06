@@ -21,4 +21,4 @@ RUN python -m pip install --upgrade pip \
 
 COPY apps/worker /app
 
-CMD ["celery", "-A", "app.main:celery_app", "worker", "--loglevel=info", "--queues=default,generation,rendering,publishing"]
+CMD ["celery", "-A", "app.main:celery_app", "worker", "--loglevel=info", "--queues=generation"]

@@ -34,6 +34,17 @@ from app.services.usage_service import consume_usage
 
 logger = structlog.get_logger(__name__)
 
+ERROR_MESSAGE_MAX_CHARS = 1000
+
+
+def _safe_error_message(exc: Exception, max_length: int = ERROR_MESSAGE_MAX_CHARS) -> str:
+    """Return a bounded single-line error message for render logs and job state."""
+    message = str(exc) or type(exc).__name__
+    message = message.replace("\r", " ").replace("\n", " ")
+    if len(message) > max_length:
+        return f"{message[:max_length]}..."
+    return message
+
 
 # ── URL Helper ────────────────────────────────────────────────────────────────
 
@@ -223,7 +234,7 @@ async def _run_render_pipeline_inline(
     project_id: uuid.UUID,
     version_id: uuid.UUID,
     render_job_id: uuid.UUID,
-) -> None:
+) -> bool:
     """Run the render pipeline inline (GENERATION_MODE=sync)."""
     from app.db.session import AsyncSessionLocal
 
@@ -234,8 +245,13 @@ async def _run_render_pipeline_inline(
             version = await db.get(ReelVersion, version_id)
 
             if not all([render_job, project, version]):
-                logger.error("render_pipeline_missing_records", project_id=str(project_id))
-                return
+                logger.error(
+                    "render_pipeline_missing_records",
+                    project_id=str(project_id),
+                    version_id=str(version_id),
+                    render_job_id=str(render_job_id),
+                )
+                return False
 
             # ── Mark RUNNING ──────────────────────────────────────────────────
             render_job.status = JobStatus.RUNNING
@@ -383,18 +399,38 @@ async def _run_render_pipeline_inline(
             logger.info(
                 "render_pipeline_complete",
                 project_id=str(project_id),
+                version_id=str(version_id),
+                render_job_id=str(render_job_id),
                 renderer=result.renderer,
             )
+            return True
 
         except Exception as exc:
-            logger.exception("render_pipeline_error", project_id=str(project_id), error=str(exc))
+            safe_error = _safe_error_message(exc)
+            stderr_tail = getattr(exc, "stderr_tail", None)
+            logger.exception(
+                "render_pipeline_error",
+                project_id=str(project_id),
+                version_id=str(version_id),
+                render_job_id=str(render_job_id),
+                error_type=type(exc).__name__,
+                error=safe_error,
+                ffmpeg_stderr_tail=stderr_tail,
+            )
             try:
                 render_job = await db.get(RenderJob, render_job_id)
                 project = await db.get(ReelProject, project_id)
                 version = await db.get(ReelVersion, version_id)
                 if render_job:
                     render_job.status = JobStatus.FAILED
-                    render_job.error_message = str(exc)
+                    render_job.error_message = safe_error
+                    if stderr_tail:
+                        render_job.command_log = stderr_tail
+                    render_job.output_payload = {
+                        "error": safe_error,
+                        "error_type": type(exc).__name__,
+                        "ffmpeg_stderr_tail": stderr_tail,
+                    }
                     render_job.completed_at = datetime.now(UTC)
                 if project:
                     project.status = ReelProjectStatus.FAILED_RENDER
@@ -406,12 +442,17 @@ async def _run_render_pipeline_inline(
                     user_id=project.created_by if project else None,
                     resource_type="render_job",
                     resource_id=render_job_id,
-                    metadata_={"error": str(exc)},
+                    metadata_={
+                        "error": safe_error,
+                        "error_type": type(exc).__name__,
+                        "has_ffmpeg_stderr": bool(stderr_tail),
+                    },
                 )
                 db.add(audit)
                 await db.commit()
             except Exception:
                 logger.exception("render_pipeline_cleanup_error")
+            return False
 
 
 async def _resolve_voiceover_audio_path(

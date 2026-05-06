@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Fixed web container healthcheck by binding Next.js to `0.0.0.0` and
+  checking `127.0.0.1` inside the container.
+- Fixed generation Celery async DB lifecycle so provider pipeline no longer
+  reuses asyncpg connections across event loops.
+- Replaced invalid FFmpeg `force_original_aspect_ratio=cover` renderer filter
+  syntax with a valid cover-style scale/crop chain for staging renders.
 - Fixed workspace plan enum storage mismatch that broke staging registration.
 - Pinned bcrypt below v5 for passlib compatibility in Docker staging auth.
 - Repaired structlog's stdlib logger configuration so Docker staging startup

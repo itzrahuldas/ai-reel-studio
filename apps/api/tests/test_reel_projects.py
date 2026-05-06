@@ -15,6 +15,7 @@ Test categories:
 """
 
 import importlib
+import asyncio
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -492,3 +493,115 @@ def test_worker_task_idempotent():
         )
     assert result["status"] == "skipped"
     assert result["reason"] == "already_complete"
+
+
+def test_generation_provider_job_uses_local_async_session(monkeypatch):
+    """Provider task helper creates and disposes async DB resources per event loop."""
+    with _worker_generate_module() as worker_generate:
+        fake_engine = _FakeAsyncEngine()
+        fake_session = _FakeAsyncSession()
+        captured: dict[str, object] = {}
+
+        def fake_create_async_engine(*args, **kwargs):
+            captured["engine_args"] = args
+            captured["engine_kwargs"] = kwargs
+            return fake_engine
+
+        def fake_async_sessionmaker(**kwargs):
+            captured["sessionmaker_kwargs"] = kwargs
+            return _FakeAsyncSessionFactory(fake_session)
+
+        async def fake_pipeline(db, project_id, version_id, job_id):
+            assert db is fake_session
+            assert project_id
+            assert version_id
+            assert job_id
+            return True
+
+        reel_project = importlib.import_module("app.services.reel_project")
+        monkeypatch.setattr(worker_generate, "create_async_engine", fake_create_async_engine)
+        monkeypatch.setattr(worker_generate, "async_sessionmaker", fake_async_sessionmaker)
+        monkeypatch.setattr(reel_project, "_run_provider_pipeline_with_db", fake_pipeline)
+
+        result = asyncio.run(
+            worker_generate.run_generation_provider_job(uuid4(), uuid4(), uuid4())
+        )
+
+        assert result is True
+        assert fake_session.entered is True
+        assert fake_session.exited is True
+        assert fake_engine.disposed is True
+        assert captured["engine_args"][0] == worker_generate.settings.DATABASE_URL
+
+
+def test_generate_reel_task_failed_pipeline_does_not_log_complete(monkeypatch):
+    """Provider task returns failed and does not emit a misleading complete log."""
+    with _worker_generate_module() as worker_generate:
+        fake_logger = _FakeWorkerLogger()
+
+        async def fake_provider_job(project_id, version_id, job_id):
+            assert project_id
+            assert version_id
+            assert job_id
+            return False
+
+        monkeypatch.setattr(worker_generate, "run_generation_provider_job", fake_provider_job)
+        monkeypatch.setattr(worker_generate, "logger", fake_logger)
+
+        result = worker_generate.generate_reel_task.run(
+            project_id=str(uuid4()),
+            version_id=str(uuid4()),
+            job_id=str(uuid4()),
+        )
+
+        assert result["status"] == "failed"
+        assert "generate_reel_task.failed" in fake_logger.warning_events
+        assert "generate_reel_task.complete" not in fake_logger.info_events
+
+
+class _FakeAsyncEngine:
+    def __init__(self) -> None:
+        self.disposed = False
+
+    async def dispose(self) -> None:
+        self.disposed = True
+
+
+class _FakeAsyncSession:
+    def __init__(self) -> None:
+        self.entered = False
+        self.exited = False
+
+    async def __aenter__(self):
+        self.entered = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited = True
+
+
+class _FakeAsyncSessionFactory:
+    def __init__(self, session: _FakeAsyncSession) -> None:
+        self.session = session
+
+    def __call__(self) -> _FakeAsyncSession:
+        return self.session
+
+
+class _FakeWorkerLogger:
+    def __init__(self) -> None:
+        self.info_events: list[str] = []
+        self.warning_events: list[str] = []
+        self.error_events: list[str] = []
+
+    def info(self, event: str, **_kwargs) -> None:
+        self.info_events.append(event)
+
+    def warning(self, event: str, **_kwargs) -> None:
+        self.warning_events.append(event)
+
+    def error(self, event: str, **_kwargs) -> None:
+        self.error_events.append(event)
+
+    def exception(self, event: str, **_kwargs) -> None:
+        self.error_events.append(event)

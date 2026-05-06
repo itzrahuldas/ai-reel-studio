@@ -25,6 +25,7 @@ OUTPUT_HEIGHT = 1920
 OUTPUT_FPS = 30
 OUTPUT_CRF = 23
 OUTPUT_AUDIO_BITRATE = "192k"
+FFMPEG_STDERR_TAIL_CHARS = 2000
 
 
 class RenderParams(NamedTuple):
@@ -51,6 +52,17 @@ class FFmpegNotFoundError(RuntimeError):
 
 class FFmpegRenderError(RuntimeError):
     """Raised when FFmpeg exits with a non-zero return code."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        returncode: int | None = None,
+        stderr_tail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+        self.stderr_tail = stderr_tail
 
 
 class FFmpegTimeoutError(RuntimeError):
@@ -117,13 +129,18 @@ class FFmpegRenderer:
         elapsed = time.monotonic() - start_time
 
         if proc.returncode != 0:
-            error_text = stderr.decode(errors="replace")
+            error_text = _safe_stderr_tail(stderr)
             logger.error(
                 "ffmpeg_render.failed",
                 returncode=proc.returncode,
-                error=error_text[-500:],  # Last 500 chars of stderr
+                output=str(params.output_path.name),
+                stderr_tail=error_text,
             )
-            raise FFmpegRenderError(f"FFmpeg exited with code {proc.returncode}")
+            raise FFmpegRenderError(
+                f"FFmpeg exited with code {proc.returncode}",
+                returncode=proc.returncode,
+                stderr_tail=error_text,
+            )
 
         if not params.output_path.exists() or params.output_path.stat().st_size == 0:
             raise FFmpegRenderError("FFmpeg completed but output file is missing or empty")
@@ -168,11 +185,16 @@ class FFmpegRenderer:
 
         if params.audio_path and params.audio_path.exists():
             cmd += ["-i", str(params.audio_path)]
+        else:
+            cmd += [
+                "-f", "lavfi",
+                "-i", f"aevalsrc=0:c=stereo:s=44100:d={params.duration_seconds}",
+            ]
 
         # Video filter chain
         scale_crop = (
-            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=cover,"
-            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},setsar=1"
         )
         ken_burns = (
             f"zoompan=z='min(zoom+0.0005,1.2)':x='iw/2-(iw/zoom/2)':"
@@ -201,8 +223,6 @@ class FFmpegRenderer:
         else:
             # Generate silent audio track
             cmd += [
-                "-f", "lavfi",
-                "-i", f"aevalsrc=0:c=stereo:s=44100:d={params.duration_seconds}",
                 "-map", "0:v", "-map", "1:a",
                 "-c:a", "aac", "-b:a", "128k",
             ]
@@ -255,3 +275,9 @@ class FFmpegRenderer:
             renderer="placeholder",
             metadata={"renderer": "placeholder", "ffmpeg_available": False},
         )
+
+
+def _safe_stderr_tail(stderr: bytes) -> str:
+    """Decode and bound FFmpeg stderr for logs and database error context."""
+    text = stderr.decode(errors="replace").replace("\x00", "")
+    return text[-FFMPEG_STDERR_TAIL_CHARS:]
