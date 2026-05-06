@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Repaired structlog's stdlib logger configuration so Docker staging startup
+  logging no longer crashes and sensitive log fields remain redacted.
 - Synced the frontend package lockfile so `npm ci` installs from `apps/web`
   cleanly in CI.
 - Shortened pre-staging Alembic revision identifiers so every `version_num`
