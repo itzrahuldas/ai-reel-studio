@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
-- Fixed web container healthcheck by binding Next.js to `0.0.0.0` and
-  checking `127.0.0.1` inside the container.
+- Fixed web container runtime binding by forcing `HOSTNAME=0.0.0.0` in the
+  Docker CMD so Docker healthcheck can probe `127.0.0.1`.
 - Fixed generation Celery async DB lifecycle so provider pipeline no longer
   reuses asyncpg connections across event loops.
 - Replaced invalid FFmpeg `force_original_aspect_ratio=cover` renderer filter
