@@ -1,6 +1,6 @@
 """Update SocialAccount fields
 
-Revision ID: 0003_update_social_account_fields
+Revision ID: 0003_social_account_fields
 Revises: 0002_add_render_job_fields
 Create Date: 2026-05-03 17:05:00.000000
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '0003_update_social_account_fields'
+revision: str = '0003_social_account_fields'
 down_revision: str | None = '0002_add_render_job_fields'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

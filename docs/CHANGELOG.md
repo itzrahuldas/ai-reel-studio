@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Synced the frontend package lockfile so `npm ci` installs from `apps/web`
+  cleanly in CI.
+- Shortened pre-staging Alembic revision identifiers so every `version_num`
+  value fits Alembic's default 32-character version table column.
 - Enforced `PUBLISH` usage when scheduled publish jobs actually execute.
 - Made `consume_usage()` check idempotency before quota and use `used + quantity > limit`.
 - Moved publish URL validation and schedule time validation before usage writes.

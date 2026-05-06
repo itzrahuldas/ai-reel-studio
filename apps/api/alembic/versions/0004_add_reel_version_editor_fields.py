@@ -1,7 +1,7 @@
 """Add render settings and edit metadata to reel version
 
-Revision ID: 0004_add_reel_version_editor_fields
-Revises: 0003_update_social_account_fields
+Revision ID: 0004_reel_editor_fields
+Revises: 0003_social_account_fields
 Create Date: 2026-05-03 23:20:00.000000
 
 """
@@ -13,8 +13,8 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '0004_add_reel_version_editor_fields'
-down_revision: str | None = '0003_update_social_account_fields'
+revision: str = '0004_reel_editor_fields'
+down_revision: str | None = '0003_social_account_fields'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
