@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Fixed workspace plan enum storage mismatch that broke staging registration.
 - Pinned bcrypt below v5 for passlib compatibility in Docker staging auth.
 - Repaired structlog's stdlib logger configuration so Docker staging startup
   logging no longer crashes and sensitive log fields remain redacted.

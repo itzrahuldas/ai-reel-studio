@@ -66,7 +66,7 @@ def get_effective_plan_key(subscription: WorkspaceSubscription | None) -> PlanKe
         return PlanKey.FREE
 
     try:
-        plan_key = PlanKey(subscription.plan_key)
+        plan_key = PlanKey(subscription.plan_key.upper())
     except ValueError:
         return PlanKey.FREE
 

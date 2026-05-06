@@ -26,6 +26,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 
+
+def enum_values(enum_cls: type[enum.Enum]) -> list[str]:
+    """Persist StrEnum values instead of member names for legacy lowercase DB enums."""
+    return [member.value for member in enum_cls]
+
 # ── Status Enums ────────────────────────────────────────────────────────────
 
 
@@ -94,6 +99,7 @@ class PublishJobStatus(enum.StrEnum):
 
 class WorkspacePlan(enum.StrEnum):
     FREE = "free"
+    CREATOR = "creator"
     PRO = "pro"
     AGENCY = "agency"
 
@@ -168,7 +174,9 @@ class Workspace(TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     plan: Mapped[WorkspacePlan] = mapped_column(
-        Enum(WorkspacePlan), default=WorkspacePlan.FREE, nullable=False
+        Enum(WorkspacePlan, name="workspaceplan", values_callable=enum_values),
+        default=WorkspacePlan.FREE,
+        nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -188,7 +196,10 @@ class WorkspaceMember(TimestampMixin, Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role: Mapped[WorkspaceMemberRole] = mapped_column(Enum(WorkspaceMemberRole), nullable=False)
+    role: Mapped[WorkspaceMemberRole] = mapped_column(
+        Enum(WorkspaceMemberRole, name="workspacememberrole", values_callable=enum_values),
+        nullable=False,
+    )
     invited_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -205,7 +216,9 @@ class SocialAccount(TimestampMixin, Base):
     connected_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     platform: Mapped[str] = mapped_column(String(50), nullable=False, default="instagram")
     status: Mapped[SocialAccountStatus] = mapped_column(
-        Enum(SocialAccountStatus), default=SocialAccountStatus.CONNECTED, nullable=False
+        Enum(SocialAccountStatus, name="socialaccountstatus", values_callable=enum_values),
+        default=SocialAccountStatus.CONNECTED,
+        nullable=False,
     )
     username: Mapped[str | None] = mapped_column(String(255))
     account_type: Mapped[str | None] = mapped_column(String(50))
@@ -230,14 +243,19 @@ class MediaAsset(TimestampMixin, Base):
     workspace_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
     project_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"))
     version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"))
-    asset_type: Mapped[MediaAssetType] = mapped_column(Enum(MediaAssetType), nullable=False)
+    asset_type: Mapped[MediaAssetType] = mapped_column(
+        Enum(MediaAssetType, name="mediaassettype", values_callable=enum_values),
+        nullable=False,
+    )
     s3_key: Mapped[str] = mapped_column(Text, nullable=False)
     s3_bucket: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str | None] = mapped_column(String(500))
     mime_type: Mapped[str | None] = mapped_column(String(100))
     file_size: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[MediaAssetStatus] = mapped_column(
-        Enum(MediaAssetStatus), default=MediaAssetStatus.PENDING_UPLOAD, nullable=False
+        Enum(MediaAssetStatus, name="mediaassetstatus", values_callable=enum_values),
+        default=MediaAssetStatus.PENDING_UPLOAD,
+        nullable=False,
     )
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
 
@@ -255,7 +273,10 @@ class ReelProject(TimestampMixin, Base):
     duration_seconds: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     cta_text: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[ReelProjectStatus] = mapped_column(
-        Enum(ReelProjectStatus), default=ReelProjectStatus.DRAFT, nullable=False, index=True
+        Enum(ReelProjectStatus, name="reelprojectstatus", values_callable=enum_values),
+        default=ReelProjectStatus.DRAFT,
+        nullable=False,
+        index=True,
     )
     latest_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id", use_alter=True))
     source_image_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
@@ -297,7 +318,9 @@ class ReelVersion(TimestampMixin, Base):
     rendered_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
     thumbnail_asset_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media_assets.id"))
     status: Mapped[ReelProjectStatus] = mapped_column(
-        Enum(ReelProjectStatus), default=ReelProjectStatus.DRAFT, nullable=False
+        Enum(ReelProjectStatus, name="reelprojectstatus", values_callable=enum_values),
+        default=ReelProjectStatus.DRAFT,
+        nullable=False,
     )
     approved_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -316,7 +339,12 @@ class GenerationJob(TimestampMixin, Base):
     version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"))
     celery_task_id: Mapped[str | None] = mapped_column(String(255))
     job_type: Mapped[str] = mapped_column(String(50), default="full_generation", nullable=False)
-    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.QUEUED, nullable=False, index=True)
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="jobstatus", values_callable=enum_values),
+        default=JobStatus.QUEUED,
+        nullable=False,
+        index=True,
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -338,7 +366,11 @@ class RenderJob(TimestampMixin, Base):
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_projects.id"), nullable=False, index=True)
     version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"), nullable=False)
     celery_task_id: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.QUEUED, nullable=False)
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="jobstatus", values_callable=enum_values),
+        default=JobStatus.QUEUED,
+        nullable=False,
+    )
     renderer: Mapped[str] = mapped_column(String(50), default="ffmpeg", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -360,7 +392,12 @@ class PublishJob(TimestampMixin, Base):
     version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reel_versions.id"), nullable=False)
     social_account_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("social_accounts.id"), nullable=False, index=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[PublishJobStatus] = mapped_column(Enum(PublishJobStatus), default=PublishJobStatus.QUEUED, nullable=False, index=True)
+    status: Mapped[PublishJobStatus] = mapped_column(
+        Enum(PublishJobStatus, name="publishjobstatus", values_callable=enum_values),
+        default=PublishJobStatus.QUEUED,
+        nullable=False,
+        index=True,
+    )
     ig_container_id: Mapped[str | None] = mapped_column(String(255))
     ig_media_id: Mapped[str | None] = mapped_column(String(255))
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

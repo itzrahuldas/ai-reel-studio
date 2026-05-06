@@ -5,7 +5,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import SubscriptionStatus, Workspace, WorkspaceMember, WorkspaceSubscription
+from app.models.models import (
+    SubscriptionStatus,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceMemberRole,
+    WorkspacePlan,
+    WorkspaceSubscription,
+)
 from app.schemas.schemas import CreateWorkspaceRequest, WorkspaceMemberResponse
 from app.services.usage_service import get_current_period_bounds
 
@@ -42,7 +49,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
     workspace = Workspace(
         name=data.name,
         slug=data.slug,
-        plan="free",
+        plan=WorkspacePlan.FREE,
         is_active=True,
         owner_id=user_id,
     )
@@ -52,7 +59,7 @@ async def create_workspace(db: AsyncSession, user_id: uuid.UUID, data: CreateWor
     member = WorkspaceMember(
         workspace_id=workspace.id,
         user_id=user_id,
-        role="owner"
+        role=WorkspaceMemberRole.OWNER,
     )
     db.add(member)
 

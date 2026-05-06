@@ -230,7 +230,7 @@ def get_effective_plan_key(subscription: WorkspaceSubscription | None) -> PlanKe
         return PlanKey.FREE
 
     try:
-        subscription_plan = PlanKey(subscription.plan_key)
+        subscription_plan = PlanKey(subscription.plan_key.upper())
     except ValueError:
         logger.warning(
             "workspace_subscription_plan_unknown",
@@ -654,7 +654,7 @@ async def get_billing_status(db: AsyncSession, workspace_id: uuid.UUID) -> dict[
     subscription_plan_key = PlanKey.FREE
     if subscription:
         try:
-            subscription_plan_key = PlanKey(subscription.plan_key)
+            subscription_plan_key = PlanKey(subscription.plan_key.upper())
         except ValueError:
             subscription_plan_key = PlanKey.FREE
 
