@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.models import PublishJob, PublishJobStatus
-from apps.worker.app.tasks.publish_reel import publish_reel_task
+from app.tasks.publish_reel import publish_reel_task
 
 logger = structlog.get_logger(__name__)
 
@@ -61,7 +61,7 @@ async def run_scan_scheduled_jobs() -> None:
                     await db.commit()
                 else:
                     # Sync mode for local testing
-                    from apps.worker.app.tasks.publish_reel import run_publish_pipeline
+                    from app.tasks.publish_reel import run_publish_pipeline
                     await run_publish_pipeline(db, str(job.id))
 
             except Exception as e:

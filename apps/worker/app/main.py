@@ -3,7 +3,13 @@ Celery worker application entry point.
 """
 
 import os
+
 from celery import Celery
+
+from app.core.config import settings
+from app.core.logging import configure_logging
+
+configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
 
 celery_app = Celery(
     "ai_reel_studio",

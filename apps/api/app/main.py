@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler — startup and shutdown events."""
-    configure_logging()
+    configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
     logger.info("ai_reel_studio.startup", version=settings.APP_VERSION, env=settings.APP_ENV)
     yield
     logger.info("ai_reel_studio.shutdown")
