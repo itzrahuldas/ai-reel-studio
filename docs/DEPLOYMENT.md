@@ -71,6 +71,93 @@ Run migrations:
 docker compose exec api alembic upgrade head
 ```
 
+## Staging Docker Compose
+
+Use the staging template and Compose file when deploying to a VPS or any host
+that runs Docker Compose:
+
+```bash
+cp .env.staging.example .env.staging
+# Fill .env.staging in the staging host or secret manager.
+bash scripts/deploy_staging.sh .env.staging
+```
+
+For migrations only:
+
+```bash
+bash scripts/run_staging_migrations.sh .env.staging
+```
+
+The staging Compose file starts `api`, `web`, `worker-generation`,
+`worker-rendering`, `worker-publishing`, `celery-beat`, Postgres, and Redis. It
+does not expose Postgres or Redis ports. The API and web ports should sit behind
+a staging HTTPS proxy or platform router.
+
+If using managed Postgres or Redis, keep `DATABASE_URL`, `REDIS_URL`,
+`CELERY_BROKER_URL`, and `CELERY_RESULT_BACKEND` pointed at the managed services.
+Then disable local `postgres`/`redis` with a small deployment override file or
+your platform's service definitions. Do not expose managed database or Redis
+services publicly.
+
+## Provider-Specific Staging Notes
+
+### Docker Compose VPS Staging
+
+- Use `docker-compose.staging.yml` with `.env.staging`.
+- Put Nginx, Caddy, Traefik, or a cloud load balancer in front of `api` and `web`.
+- Terminate HTTPS at the proxy and forward to `api:8000` and `web:3000`.
+- Use persistent Docker volumes for Postgres, Redis, and local media.
+- Prefer S3/R2 storage before testing any external media fetch behavior.
+
+### Managed Platform Staging
+
+- Create separate process/service types for API, web, generation worker,
+  rendering worker, publishing worker, and Celery Beat.
+- Set the same environment variables on API and all worker services.
+- Give the web build `NEXT_PUBLIC_API_URL` at build time.
+- Ensure rendering workers include FFmpeg.
+- Ensure only one Celery Beat instance is running.
+
+### Vercel Frontend Plus Container Backend
+
+- Deploy `apps/web` to Vercel with `NEXT_PUBLIC_API_URL` set to the staging API.
+- Deploy API and workers to a container host such as Fly.io, Render, Railway,
+  ECS, or Kubernetes.
+- Configure CORS with `ALLOWED_ORIGINS=<vercel-staging-url>`.
+- Use managed Postgres, Redis, and object storage.
+
+### Render, Railway, Fly, Or Similar Services
+
+- Define one web service for the API container.
+- Define one web/static service for the frontend or use the platform's Next.js support.
+- Define three worker services with queue-specific commands.
+- Define one scheduler service for Celery Beat.
+- Use platform-managed secrets for `.env.staging` values.
+- Run `alembic upgrade head` as a deploy command, release phase, or manual job
+  before shifting traffic.
+
+### Managed Postgres And Redis
+
+Use managed Postgres and Redis when staging needs persistence, backups, TLS, or
+stable worker queues. Self-hosted Compose services are acceptable for short-lived
+internal staging, but must not be exposed publicly.
+
+### S3/R2 Storage Notes
+
+For staging media URLs that must be fetched outside the deployment network,
+configure S3-compatible storage:
+
+- `STORAGE_PROVIDER=s3`
+- `S3_ENDPOINT_URL`
+- `S3_BUCKET`
+- `S3_ACCESS_KEY_ID`
+- `S3_SECRET_ACCESS_KEY`
+- `S3_REGION`
+- `STORAGE_PUBLIC_BASE_URL`
+
+Local storage is acceptable only when the host has a persistent disk and public
+media URLs are not being tested.
+
 ## Production Startup Commands
 
 API:

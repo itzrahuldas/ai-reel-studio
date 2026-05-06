@@ -48,6 +48,19 @@ To include reel generation and rendering:
 SMOKE_CREATE_REEL=true python scripts/staging_smoke_test.py
 ```
 
+Full staging validation command:
+
+```bash
+SMOKE_API_BASE_URL=https://api-staging.example.com \
+SMOKE_FRONTEND_BASE_URL=https://app-staging.example.com \
+SMOKE_TEST_EMAIL=smoke@example.com \
+SMOKE_TEST_PASSWORD='<staging-smoke-password>' \
+SMOKE_CREATE_REEL=true \
+SMOKE_TEST_STRIPE_MOCK=true \
+SMOKE_TEST_INSTAGRAM_MOCK=true \
+python scripts/staging_smoke_test.py
+```
+
 The script uses Python standard library HTTP clients and does not require local
 application dependencies.
 
