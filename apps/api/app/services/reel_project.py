@@ -253,11 +253,23 @@ async def _run_provider_pipeline_inline(
     project_id: uuid.UUID,
     version_id: uuid.UUID,
     job_id: uuid.UUID,
-) -> None:
+) -> bool:
     """Run the provider-backed generation pipeline inline."""
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        return await _run_provider_pipeline_with_db(db, project_id, version_id, job_id)
+
+
+async def _run_provider_pipeline_with_db(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> bool:
+    """Run the provider-backed generation pipeline using the provided DB session."""
     from datetime import UTC, datetime
 
-    from app.db.session import AsyncSessionLocal
     from app.services.ai.openai_provider import sanitize_provider_error
     from app.services.ai.provider_factory import get_provider_bundle
     from app.services.ai.schemas import (
@@ -267,185 +279,196 @@ async def _run_provider_pipeline_inline(
     )
 
     bundle = None
-    async with AsyncSessionLocal() as db:
+    try:
+        job = await db.get(GenerationJob, job_id)
+        project = await db.get(ReelProject, project_id)
+        version = await db.get(ReelVersion, version_id)
+
+        if not job or not project or not version:
+            logger.error(
+                "provider_pipeline_missing_records",
+                project_id=str(project_id),
+                version_id=str(version_id),
+                job_id=str(job_id),
+            )
+            return False
+
+        if job.status == JobStatus.COMPLETE:
+            logger.info("provider_pipeline_already_complete", job_id=str(job_id))
+            return True
+
+        bundle = get_provider_bundle()
+        warnings: list[str] = []
+
+        job.status = JobStatus.RUNNING
+        job.started_at = datetime.now(UTC)
+        job.provider = bundle.ai_provider
+        project.status = ReelProjectStatus.SCRIPT_GENERATING
+        await db.commit()
+
+        source_image_path = await _resolve_source_image_path(db, project)
+        image_analysis = await bundle.image_analysis.analyze_image(
+            str(source_image_path) if source_image_path else None
+        )
+
+        plan = await bundle.creative_planner.generate_reel_plan(
+            ReelPlanInput(
+                prompt=project.prompt,
+                image_analysis=image_analysis,
+                language=project.language,
+                tone=project.tone,
+                duration_seconds=project.duration_seconds,
+                cta_text=project.cta_text,
+            )
+        )
+
+        voiceover_asset = None
+        tts_status = "missing"
+        tts_error = None
+        tts_duration = None
+        if plan.voiceover_text:
+            try:
+                voiceover_asset, tts_duration = await _generate_voiceover_asset(
+                    db=db,
+                    project=project,
+                    version=version,
+                    text=plan.voiceover_text,
+                    provider=bundle.tts,
+                    provider_name=bundle.tts_provider,
+                )
+                tts_status = "generated"
+                plan.subtitle_lines = align_subtitle_lines(
+                    plan.subtitle_lines,
+                    float(tts_duration),
+                )
+            except Exception as exc:
+                tts_error = sanitize_provider_error(exc)
+                if settings.APP_ENV == "production" and bundle.tts_provider == "openai":
+                    raise AIProviderRuntimeError(tts_error, code="TTS_FAILED") from exc
+                warnings.append(tts_error)
+                tts_status = "failed"
+
+        provider_metadata = {
+            "ai_provider": bundle.ai_provider,
+            "image_analysis_provider": bundle.image_analysis_provider,
+            "tts_provider": bundle.tts_provider,
+            "image_analysis": image_analysis.model_dump(mode="json"),
+            "tts": {
+                "status": tts_status,
+                "asset_id": str(voiceover_asset.id) if voiceover_asset else None,
+                "duration_seconds": tts_duration,
+                "error": tts_error,
+            },
+            "warnings": warnings,
+            "usage_note": (
+                "AI_GENERATION includes planning, image analysis, subtitles, "
+                "and TTS in Phase 1."
+            ),
+        }
+
+        version.hook = plan.hook
+        version.script = plan.script
+        version.scenes = [scene.model_dump(mode="json") for scene in plan.scenes]
+        version.voiceover_text = plan.voiceover_text
+        version.subtitle_lines = [
+            subtitle.model_dump(mode="json") for subtitle in plan.subtitle_lines
+        ]
+        version.caption = plan.caption
+        version.hashtags = plan.hashtags
+        version.video_prompt = plan.video_prompt
+        version.estimated_duration = plan.estimated_duration_seconds
+        version.moderation_flags = plan.moderation_flags.model_dump(mode="json")
+        version.voiceover_asset_id = voiceover_asset.id if voiceover_asset else None
+        version.audio_asset_id = voiceover_asset.id if voiceover_asset else version.audio_asset_id
+        version.edit_metadata = {
+            **(version.edit_metadata or {}),
+            "ai_provider": bundle.ai_provider,
+            "image_analysis": image_analysis.model_dump(mode="json"),
+            "voiceover_status": tts_status,
+            "generation_warnings": warnings,
+        }
+        version.status = ReelProjectStatus.READY_FOR_REVIEW
+
+        job.status = JobStatus.COMPLETE
+        job.completed_at = datetime.now(UTC)
+        job.output_payload = {
+            "creative_plan": plan.model_dump(mode="json"),
+            **provider_metadata,
+        }
+        job.provider_metadata_json = provider_metadata
+        job.error_code = None
+
+        project.status = ReelProjectStatus.READY_FOR_REVIEW
+
+        audit = AuditLog(
+            action="reel_generation_completed",
+            workspace_id=project.workspace_id,
+            user_id=project.created_by,
+            resource_type="generation_job",
+            resource_id=job.id,
+            metadata_={
+                "version_id": str(version_id),
+                "provider": bundle.ai_provider,
+                "tts_status": tts_status,
+                "mode": "sync",
+            },
+        )
+        db.add(audit)
+        await db.commit()
+
+        logger.info(
+            "provider_pipeline_complete",
+            project_id=str(project_id),
+            version_id=str(version_id),
+            job_id=str(job_id),
+            provider=bundle.ai_provider,
+            tts_status=tts_status,
+        )
+        return True
+
+    except Exception as exc:
+        safe_error = sanitize_provider_error(exc)
+        error_code = getattr(exc, "code", "AI_PROVIDER_ERROR")
+        provider = getattr(bundle, "ai_provider", settings.AI_PROVIDER)
+        logger.exception(
+            "provider_pipeline_error",
+            project_id=str(project_id),
+            version_id=str(version_id),
+            job_id=str(job_id),
+            provider=provider,
+            error_type=type(exc).__name__,
+            error=safe_error,
+        )
         try:
+            await db.rollback()
             job = await db.get(GenerationJob, job_id)
             project = await db.get(ReelProject, project_id)
             version = await db.get(ReelVersion, version_id)
-
-            if not job or not project or not version:
-                logger.error("provider_pipeline_missing_records", project_id=str(project_id))
-                return
-
-            if job.status == JobStatus.COMPLETE:
-                logger.info("provider_pipeline_already_complete", job_id=str(job_id))
-                return
-
-            bundle = get_provider_bundle()
-            warnings: list[str] = []
-
-            job.status = JobStatus.RUNNING
-            job.started_at = datetime.now(UTC)
-            job.provider = bundle.ai_provider
-            project.status = ReelProjectStatus.SCRIPT_GENERATING
+            if job:
+                job.status = JobStatus.FAILED
+                job.provider = provider
+                job.error_message = safe_error
+                job.error_code = error_code
+                job.completed_at = datetime.now(UTC)
+                job.provider_metadata_json = {
+                    "provider": provider,
+                    "error_code": error_code,
+                    "error_type": type(exc).__name__,
+                    "error_message": safe_error,
+                }
+            if project:
+                project.status = ReelProjectStatus.FAILED_SCRIPT
+            if version:
+                version.status = ReelProjectStatus.FAILED_SCRIPT
+                version.edit_metadata = {
+                    **(version.edit_metadata or {}),
+                    "provider_error": safe_error,
+                    "provider_error_code": error_code,
+                }
             await db.commit()
-
-            source_image_path = await _resolve_source_image_path(db, project)
-            image_analysis = await bundle.image_analysis.analyze_image(
-                str(source_image_path) if source_image_path else None
-            )
-
-            plan = await bundle.creative_planner.generate_reel_plan(
-                ReelPlanInput(
-                    prompt=project.prompt,
-                    image_analysis=image_analysis,
-                    language=project.language,
-                    tone=project.tone,
-                    duration_seconds=project.duration_seconds,
-                    cta_text=project.cta_text,
-                )
-            )
-
-            voiceover_asset = None
-            tts_status = "missing"
-            tts_error = None
-            tts_duration = None
-            if plan.voiceover_text:
-                try:
-                    voiceover_asset, tts_duration = await _generate_voiceover_asset(
-                        db=db,
-                        project=project,
-                        version=version,
-                        text=plan.voiceover_text,
-                        provider=bundle.tts,
-                        provider_name=bundle.tts_provider,
-                    )
-                    tts_status = "generated"
-                    plan.subtitle_lines = align_subtitle_lines(
-                        plan.subtitle_lines,
-                        float(tts_duration),
-                    )
-                except Exception as exc:
-                    tts_error = sanitize_provider_error(exc)
-                    if settings.APP_ENV == "production" and bundle.tts_provider == "openai":
-                        raise AIProviderRuntimeError(tts_error, code="TTS_FAILED") from exc
-                    warnings.append(tts_error)
-                    tts_status = "failed"
-
-            provider_metadata = {
-                "ai_provider": bundle.ai_provider,
-                "image_analysis_provider": bundle.image_analysis_provider,
-                "tts_provider": bundle.tts_provider,
-                "image_analysis": image_analysis.model_dump(mode="json"),
-                "tts": {
-                    "status": tts_status,
-                    "asset_id": str(voiceover_asset.id) if voiceover_asset else None,
-                    "duration_seconds": tts_duration,
-                    "error": tts_error,
-                },
-                "warnings": warnings,
-                "usage_note": (
-                    "AI_GENERATION includes planning, image analysis, subtitles, "
-                    "and TTS in Phase 1."
-                ),
-            }
-
-            version.hook = plan.hook
-            version.script = plan.script
-            version.scenes = [scene.model_dump(mode="json") for scene in plan.scenes]
-            version.voiceover_text = plan.voiceover_text
-            version.subtitle_lines = [
-                subtitle.model_dump(mode="json") for subtitle in plan.subtitle_lines
-            ]
-            version.caption = plan.caption
-            version.hashtags = plan.hashtags
-            version.video_prompt = plan.video_prompt
-            version.estimated_duration = plan.estimated_duration_seconds
-            version.moderation_flags = plan.moderation_flags.model_dump(mode="json")
-            version.voiceover_asset_id = voiceover_asset.id if voiceover_asset else None
-            version.audio_asset_id = (
-                voiceover_asset.id if voiceover_asset else version.audio_asset_id
-            )
-            version.edit_metadata = {
-                **(version.edit_metadata or {}),
-                "ai_provider": bundle.ai_provider,
-                "image_analysis": image_analysis.model_dump(mode="json"),
-                "voiceover_status": tts_status,
-                "generation_warnings": warnings,
-            }
-            version.status = ReelProjectStatus.READY_FOR_REVIEW
-
-            job.status = JobStatus.COMPLETE
-            job.completed_at = datetime.now(UTC)
-            job.output_payload = {
-                "creative_plan": plan.model_dump(mode="json"),
-                **provider_metadata,
-            }
-            job.provider_metadata_json = provider_metadata
-            job.error_code = None
-
-            project.status = ReelProjectStatus.READY_FOR_REVIEW
-
-            audit = AuditLog(
-                action="reel_generation_completed",
-                workspace_id=project.workspace_id,
-                user_id=project.created_by,
-                resource_type="generation_job",
-                resource_id=job.id,
-                metadata_={
-                    "version_id": str(version_id),
-                    "provider": bundle.ai_provider,
-                    "tts_status": tts_status,
-                    "mode": "sync",
-                },
-            )
-            db.add(audit)
-            await db.commit()
-
-            logger.info(
-                "provider_pipeline_complete",
-                project_id=str(project_id),
-                provider=bundle.ai_provider,
-                tts_status=tts_status,
-            )
-
-        except Exception as exc:
-            safe_error = sanitize_provider_error(exc)
-            error_code = getattr(exc, "code", "AI_PROVIDER_ERROR")
-            provider = getattr(bundle, "ai_provider", settings.AI_PROVIDER)
-            logger.exception(
-                "provider_pipeline_error",
-                project_id=str(project_id),
-                job_id=str(job_id),
-                provider=provider,
-                error_type=type(exc).__name__,
-                error=safe_error,
-            )
-            try:
-                job = await db.get(GenerationJob, job_id)
-                project = await db.get(ReelProject, project_id)
-                version = await db.get(ReelVersion, version_id)
-                if job:
-                    job.status = JobStatus.FAILED
-                    job.error_message = safe_error
-                    job.error_code = error_code
-                    job.completed_at = datetime.now(UTC)
-                    job.provider_metadata_json = {
-                        "error_code": error_code,
-                        "error_type": type(exc).__name__,
-                    }
-                if project:
-                    project.status = ReelProjectStatus.FAILED_SCRIPT
-                if version:
-                    version.status = ReelProjectStatus.FAILED_SCRIPT
-                    version.edit_metadata = {
-                        **(version.edit_metadata or {}),
-                        "provider_error": safe_error,
-                        "provider_error_code": error_code,
-                    }
-                await db.commit()
-            except Exception:
-                logger.exception("provider_pipeline_cleanup_error")
+        except Exception:
+            logger.exception("provider_pipeline_cleanup_error", job_id=str(job_id))
+        return False
 
 
 async def _run_mock_pipeline_inline(

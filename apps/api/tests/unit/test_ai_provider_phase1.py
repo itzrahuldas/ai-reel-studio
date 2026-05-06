@@ -177,3 +177,171 @@ def test_provider_errors_do_not_expose_api_key():
     message = sanitize_provider_error(RuntimeError("bad key sk-test-secret"))
 
     assert "sk-test-secret" not in message
+
+
+@pytest.mark.asyncio
+async def test_provider_pipeline_mock_success_marks_ready(tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.models.models import GenerationJob, JobStatus, ReelProject, ReelProjectStatus, ReelVersion
+    from app.services.reel_project import _run_provider_pipeline_with_db
+
+    monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "AI_PROVIDER", "mock")
+    monkeypatch.setattr(settings, "IMAGE_ANALYSIS_PROVIDER", "mock")
+    monkeypatch.setattr(settings, "TTS_PROVIDER", "mock")
+    monkeypatch.setattr(settings, "TTS_VOICE", "mock")
+
+    project_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    project = SimpleNamespace(
+        id=project_id,
+        workspace_id=uuid.uuid4(),
+        created_by=uuid.uuid4(),
+        prompt="Make a reel for a coffee shop",
+        language="en",
+        tone="professional",
+        duration_seconds=15,
+        cta_text="Visit today",
+        source_image_id=None,
+        status=ReelProjectStatus.DRAFT,
+    )
+    version = SimpleNamespace(
+        id=version_id,
+        project_id=project_id,
+        status=ReelProjectStatus.DRAFT,
+        edit_metadata=None,
+        audio_asset_id=None,
+        voiceover_asset_id=None,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.QUEUED,
+        provider=None,
+        provider_metadata_json=None,
+        output_payload=None,
+        error_code=None,
+        error_message=None,
+        completed_at=None,
+    )
+    db = _PipelineFakeDb({GenerationJob: job, ReelProject: project, ReelVersion: version})
+
+    result = await _run_provider_pipeline_with_db(db, project_id, version_id, job_id)
+
+    assert result is True
+    assert job.status == JobStatus.COMPLETE
+    assert project.status == ReelProjectStatus.READY_FOR_REVIEW
+    assert version.status == ReelProjectStatus.READY_FOR_REVIEW
+    assert version.script
+    assert job.provider_metadata_json["ai_provider"] == "mock"
+    assert job.output_payload["creative_plan"]
+    assert db.commit_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_provider_pipeline_failure_persists_safe_job_metadata(monkeypatch):
+    from app.core.config import settings
+    from app.models.models import GenerationJob, JobStatus, ReelProject, ReelProjectStatus, ReelVersion
+    from app.services.ai.mock_provider import MockTTSProvider
+    from app.services.ai.provider_factory import AIProviderBundle
+    from app.services.reel_project import _run_provider_pipeline_with_db
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "mock")
+    monkeypatch.setattr(settings, "IMAGE_ANALYSIS_PROVIDER", "mock")
+    monkeypatch.setattr(settings, "TTS_PROVIDER", "mock")
+
+    def fake_bundle() -> AIProviderBundle:
+        return AIProviderBundle(
+            creative_planner=_FailingPlanner(),
+            image_analysis=_ImmediateImageAnalysis(),
+            tts=MockTTSProvider(),
+            ai_provider="mock",
+            image_analysis_provider="mock",
+            tts_provider="mock",
+        )
+
+    provider_factory = __import__(
+        "app.services.ai.provider_factory",
+        fromlist=["get_provider_bundle"],
+    )
+    monkeypatch.setattr(provider_factory, "get_provider_bundle", fake_bundle)
+
+    project_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    project = SimpleNamespace(
+        id=project_id,
+        workspace_id=uuid.uuid4(),
+        created_by=uuid.uuid4(),
+        prompt="Make a reel for a coffee shop",
+        language="en",
+        tone="professional",
+        duration_seconds=15,
+        cta_text=None,
+        source_image_id=None,
+        status=ReelProjectStatus.DRAFT,
+    )
+    version = SimpleNamespace(id=version_id, status=ReelProjectStatus.DRAFT, edit_metadata=None)
+    job = SimpleNamespace(
+        id=job_id,
+        status=JobStatus.QUEUED,
+        provider=None,
+        provider_metadata_json=None,
+        output_payload=None,
+        error_code=None,
+        error_message=None,
+        completed_at=None,
+    )
+    db = _PipelineFakeDb({GenerationJob: job, ReelProject: project, ReelVersion: version})
+
+    result = await _run_provider_pipeline_with_db(db, project_id, version_id, job_id)
+
+    assert result is False
+    assert job.status == JobStatus.FAILED
+    assert project.status == ReelProjectStatus.FAILED_SCRIPT
+    assert version.status == ReelProjectStatus.FAILED_SCRIPT
+    assert job.error_code == "AI_PROVIDER_ERROR"
+    assert job.provider_metadata_json == {
+        "provider": "mock",
+        "error_code": "AI_PROVIDER_ERROR",
+        "error_type": "RuntimeError",
+        "error_message": "AI provider failed while generating the reel.",
+    }
+    assert "sk-test-secret" not in str(job.provider_metadata_json)
+
+
+class _PipelineFakeDb:
+    def __init__(self, records: dict[type, object]) -> None:
+        self.records = records
+        self.added = []
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    async def get(self, model, _pk):
+        return self.records.get(model)
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid.uuid4()
+
+    async def commit(self) -> None:
+        self.commit_count += 1
+
+    async def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+class _ImmediateImageAnalysis:
+    async def analyze_image(self, _image_path_or_url):
+        from app.services.ai.schemas import ImageAnalysisResult
+
+        return ImageAnalysisResult()
+
+
+class _FailingPlanner:
+    async def generate_reel_plan(self, _data):
+        raise RuntimeError("bad provider sk-test-secret")

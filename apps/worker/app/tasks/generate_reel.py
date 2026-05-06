@@ -9,11 +9,14 @@ generate_video_task) which are wired for future implementation.
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import structlog
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.main import celery_app  # noqa: E402 — worker's own Celery app
@@ -52,6 +55,42 @@ def _get_sync_db() -> object:
     engine = create_engine(sync_url, pool_pre_ping=True)
     session_factory = sessionmaker(bind=engine)
     return session_factory()
+
+
+@asynccontextmanager
+async def generation_session_scope() -> AsyncIterator[AsyncSession]:
+    """Create async SQLAlchemy resources scoped to the current Celery task loop."""
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+    session_factory = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+    try:
+        async with session_factory() as db:
+            yield db
+    finally:
+        await engine.dispose()
+
+
+async def run_generation_provider_job(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> bool:
+    """Run provider generation with a DB engine/session bound to this event loop."""
+    from app.services.reel_project import _run_provider_pipeline_with_db
+
+    async with generation_session_scope() as db:
+        return await _run_provider_pipeline_with_db(db, project_id, version_id, job_id)
 
 
 # ── Main Mock Generation Task ─────────────────────────────────────────────────
@@ -114,21 +153,41 @@ def generate_reel_task(
         job_id=job_id,
     )
     try:
-        from app.services.reel_project import _run_provider_pipeline_inline
-
-        asyncio.run(
-            _run_provider_pipeline_inline(
+        succeeded = asyncio.run(
+            run_generation_provider_job(
                 project_id=uuid.UUID(project_id),
                 version_id=uuid.UUID(version_id),
                 job_id=uuid.UUID(job_id),
             )
         )
-        logger.info("generate_reel_task.complete", version_id=version_id)
-        return {"status": "complete", "version_id": version_id}
+        if not succeeded:
+            logger.warning(
+                "generate_reel_task.failed",
+                project_id=project_id,
+                version_id=version_id,
+                job_id=job_id,
+                provider=settings.AI_PROVIDER,
+            )
+            return {
+                "status": "failed",
+                "project_id": project_id,
+                "version_id": version_id,
+                "job_id": job_id,
+            }
+
+        logger.info(
+            "generate_reel_task.complete",
+            project_id=project_id,
+            version_id=version_id,
+            job_id=job_id,
+            provider=settings.AI_PROVIDER,
+        )
+        return {"status": "complete", "version_id": version_id, "job_id": job_id}
     except Exception as exc:
         logger.exception(
             "generate_reel_task.error",
             project_id=project_id,
+            version_id=version_id,
             job_id=job_id,
             provider=settings.AI_PROVIDER,
             error_type=type(exc).__name__,
@@ -137,7 +196,13 @@ def generate_reel_task(
         try:
             raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
         except MaxRetriesExceededError:
-            return {"status": "failed", "error": "AI generation task failed."}
+            return {
+                "status": "failed",
+                "project_id": project_id,
+                "version_id": version_id,
+                "job_id": job_id,
+                "error": "AI generation task failed.",
+            }
 
 
 @celery_app.task(
@@ -298,8 +363,15 @@ def generate_reel_mock_task(
             project = db.get(ReelProject, project_id)
             if job:
                 job.status = JobStatus.FAILED
-                job.error_message = str(exc)
+                job.error_message = _safe_error_message(exc)
                 job.completed_at = datetime.now(UTC)
+                job.provider = "mock"
+                job.provider_metadata_json = {
+                    "provider": "mock",
+                    "error_code": "AI_PROVIDER_ERROR",
+                    "error_type": type(exc).__name__,
+                    "error_message": _safe_error_message(exc),
+                }
             if project:
                 project.status = ReelProjectStatus.FAILED_SCRIPT
             db.commit()
