@@ -15,6 +15,15 @@ from app.main import celery_app  # noqa: E402
 logger = structlog.get_logger(__name__)
 
 
+def _safe_error_message(exc: Exception, max_length: int = 500) -> str:
+    """Return a bounded single-line error message for worker logs."""
+    message = str(exc) or type(exc).__name__
+    message = message.replace("\r", " ").replace("\n", " ")
+    if len(message) > max_length:
+        return f"{message[:max_length]}..."
+    return message
+
+
 @celery_app.task(
     bind=True,
     queue="rendering",
@@ -26,24 +35,58 @@ def render_reel_task(self: Task, project_id: str, version_id: str, render_job_id
     """
     FFmpeg rendering task.
     """
-    logger.info("render_reel_task.start", project_id=project_id, version_id=version_id, render_job_id=render_job_id)
+    logger.info(
+        "render_reel_task.start",
+        project_id=project_id,
+        version_id=version_id,
+        render_job_id=render_job_id,
+    )
     try:
         from app.services.render_service import _run_render_pipeline_inline
-        
-        asyncio.run(
+
+        succeeded = asyncio.run(
             _run_render_pipeline_inline(
                 project_id=uuid.UUID(project_id),
                 version_id=uuid.UUID(version_id),
                 render_job_id=uuid.UUID(render_job_id),
             )
         )
-        
-        logger.info("render_reel_task.complete", version_id=version_id)
+
+        if not succeeded:
+            logger.warning(
+                "render_reel_task.failed",
+                project_id=project_id,
+                version_id=version_id,
+                render_job_id=render_job_id,
+            )
+            return {
+                "version_id": version_id,
+                "render_job_id": render_job_id,
+                "status": "failed",
+            }
+
+        logger.info(
+            "render_reel_task.complete",
+            project_id=project_id,
+            version_id=version_id,
+            render_job_id=render_job_id,
+        )
         return {"version_id": version_id, "status": "complete"}
     except Exception as exc:
-        logger.exception("render_reel_task.error", version_id=version_id)
+        logger.exception(
+            "render_reel_task.error",
+            project_id=project_id,
+            version_id=version_id,
+            render_job_id=render_job_id,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
         try:
             raise self.retry(exc=exc, countdown=30)
         except MaxRetriesExceededError:
-            return {"version_id": version_id, "status": "failed", "error": str(exc)}
-
+            return {
+                "version_id": version_id,
+                "render_job_id": render_job_id,
+                "status": "failed",
+                "error": _safe_error_message(exc),
+            }

@@ -38,7 +38,7 @@ aligned to that duration before the version is marked ready for review.
 
 - **Always** output 1080×1920 — never any other aspect ratio
 - Source image must be padded/cropped to fill 9:16 (no black bars if possible)
-- Use `scale=1080:1920:force_original_aspect_ratio=cover,crop=1080:1920` in FFmpeg
+- Use `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1` in FFmpeg
 - Text overlays stay within the **safe zone**: 60px padding from all edges
 - Subtitles positioned at 80% from top (bottom-center safe area)
 - Logo/watermark (if any) in top-right corner, 40px from edges
@@ -53,8 +53,9 @@ ffmpeg \
   -loop 1 -i {source_image} \
   -i {audio_file} \
   -filter_complex "
-    [0:v]scale=1080:1920:force_original_aspect_ratio=cover,
+    [0:v]scale=1080:1920:force_original_aspect_ratio=increase,
           crop=1080:1920,
+          setsar=1,
           zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':
                   y='ih/2-(ih/zoom/2)':d={fps*duration}:s=1080x1920:fps={fps}
           [vid];
@@ -77,8 +78,9 @@ ffmpeg \
   -i {ai_video_file} \
   -i {tts_audio_file} \
   -filter_complex "
-    [0:v]scale=1080:1920:force_original_aspect_ratio=cover,
-          crop=1080:1920[vid];
+    [0:v]scale=1080:1920:force_original_aspect_ratio=increase,
+          crop=1080:1920,
+          setsar=1[vid];
     [vid]subtitles={srt_file}:force_style='...'[vout];
     [0:a][1:a]amix=inputs=2:duration=shortest:weights=0.3 1[aout]
   " \
