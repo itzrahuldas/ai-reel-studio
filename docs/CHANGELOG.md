@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Staging deployment setup artifacts: `.env.staging.example`,
+  `docker-compose.staging.yml`, staging deploy/migration scripts, and staging
+  deployment plan/checklist docs.
 - Staging smoke test script, manual GitHub Actions smoke workflow, and API
   liveness/readiness/config health endpoints for deployment verification.
 - Real AI Provider Integration Phase 1 with mock/OpenAI creative planning, image analysis, TTS voiceover generation, timed subtitle alignment, and FFmpeg voiceover rendering.

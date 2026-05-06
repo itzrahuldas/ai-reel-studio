@@ -141,6 +141,12 @@ After deploying staging, run the smoke checks documented in
 [`docs/STAGING_SMOKE_TESTS.md`](./docs/STAGING_SMOKE_TESTS.md) or trigger the
 manual `Staging Smoke` GitHub Actions workflow.
 
+Staging setup artifacts are available in
+[`docs/STAGING_DEPLOYMENT_PLAN.md`](./docs/STAGING_DEPLOYMENT_PLAN.md),
+[`docs/STAGING_DEPLOYMENT_CHECKLIST.md`](./docs/STAGING_DEPLOYMENT_CHECKLIST.md),
+`.env.staging.example`, `docker-compose.staging.yml`, and
+`scripts/deploy_staging.sh`.
+
 ---
 
 ## 💻 Development Commands
@@ -175,6 +181,11 @@ SMOKE_FRONTEND_BASE_URL=https://app-staging.example.com \
 SMOKE_TEST_EMAIL=smoke@example.com \
 SMOKE_TEST_PASSWORD='replace-me' \
 python scripts/staging_smoke_test.py
+
+# Staging Docker Compose deployment
+cp .env.staging.example .env.staging
+bash scripts/deploy_staging.sh .env.staging
+bash scripts/run_staging_migrations.sh .env.staging
 ```
 
 ---
