@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.models import PublishJob, PublishJobStatus
-from apps.worker.app.tasks.publish_reel import publish_reel_task
+from app.tasks.publish_reel import publish_reel_task
 
 logger = structlog.get_logger(__name__)
 
