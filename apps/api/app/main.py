@@ -73,9 +73,9 @@ def create_app() -> FastAPI:
     async def health_check() -> dict:
         return {
             "status": "ok",
+            "service": "api",
+            "environment": settings.APP_ENV,
             "version": settings.APP_VERSION,
-            "env": settings.APP_ENV,
-            "generation_mode": settings.GENERATION_MODE,
         }
 
     # ── Global Exception Handler ──────────────────────────────────────────────

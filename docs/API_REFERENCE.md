@@ -8,7 +8,7 @@
 
 ## Authentication
 
-All endpoints except `/health` and `/api/v1/auth/*` require:
+All endpoints except `/health`, `/api/v1/health/*`, and `/api/v1/auth/*` require:
 ```
 Authorization: Bearer <access_token>
 ```
@@ -64,8 +64,48 @@ Usage limit responses use FastAPI's `detail` field:
 ### Health
 ```
 GET /health
-Response 200: { "status": "ok", "version": "0.1.0", "timestamp": "..." }
+Response 200:
+{ "status": "ok", "service": "api", "environment": "staging", "version": "0.1.0" }
+
+GET /api/v1/health/readiness
+Response 200:
+{
+  "status": "ready",
+  "service": "api",
+  "environment": "staging",
+  "version": "0.1.0",
+  "checks": {
+    "database": { "status": "ok" },
+    "redis": { "status": "ok", "required": true },
+    "celery_broker": { "status": "ok", "required": true },
+    "storage": { "status": "ok", "provider": "local" },
+    "config": { "status": "ok" }
+  }
+}
+
+GET /api/v1/health/config
+Response 200:
+{
+  "service": "api",
+  "environment": "staging",
+  "version": "0.1.0",
+  "generation_mode": "async",
+  "render_mode": "async",
+  "publish_mode": "async",
+  "stripe_mode": "mock",
+  "instagram_mode": "mock",
+  "ai_provider": "mock",
+  "image_analysis_provider": "mock",
+  "tts_provider": "mock",
+  "storage_provider": "local",
+  "api_public_base_url_configured": true,
+  "frontend_url_configured": true,
+  "storage_public_base_url_configured": false
+}
 ```
+
+`/api/v1/health/config` never returns secret values, token values, webhook
+secrets, API keys, or raw credentials.
 
 ### Auth
 ```

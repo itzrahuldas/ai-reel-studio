@@ -197,7 +197,16 @@ API:
 
 ```bash
 curl -f https://<api-domain>/health
+curl -f https://<api-domain>/api/v1/health/readiness
+curl -f https://<api-domain>/api/v1/health/config
 ```
+
+`/health` is a lightweight liveness probe. `/api/v1/health/readiness` verifies
+database connectivity, Redis/Celery broker reachability for async modes, local
+storage writability or object-storage config, and required environment
+configuration for active Stripe, Meta, and AI modes. `/api/v1/health/config`
+returns only safe mode and configured/not-configured booleans; it must never be
+used to expose secrets.
 
 Worker:
 
@@ -246,8 +255,28 @@ Before staging users:
 
 - CI passes with Postgres and Redis services.
 - Alembic migrations apply cleanly.
+- `/health`, `/api/v1/health/readiness`, and `/api/v1/health/config` respond successfully.
 - Stripe test Checkout and webhook succeed.
 - Meta OAuth callback works with a test user.
 - OpenAI mode and mock mode both start cleanly.
 - Rendering worker can invoke FFmpeg.
 - Public media URLs are HTTPS and reachable externally.
+- Run the staging smoke script:
+
+```bash
+SMOKE_API_BASE_URL=https://<api-domain> \
+SMOKE_FRONTEND_BASE_URL=https://<web-domain> \
+SMOKE_TEST_EMAIL=<test-account-email> \
+SMOKE_TEST_PASSWORD=<test-account-password> \
+python scripts/staging_smoke_test.py
+```
+
+Optional smoke flags:
+
+- `SMOKE_CREATE_REEL=true` uploads a tiny generated PNG, creates a reel, waits
+  for generation, starts a render, and waits for render completion.
+- `SMOKE_TEST_STRIPE_MOCK=true` runs the development-only mock checkout route
+  only when the deployed API reports `APP_ENV=development` and `STRIPE_MODE=mock`.
+- `SMOKE_TEST_INSTAGRAM_MOCK=true` runs the development-only mock Instagram
+  schedule flow only when the API reports `APP_ENV=development` and mock
+  Instagram mode.

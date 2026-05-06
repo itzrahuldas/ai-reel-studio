@@ -137,6 +137,10 @@ The recommended runtime split is `web`, `api`, `worker-generation`,
 `worker-rendering`, `worker-publishing`, `celery-beat`, Postgres, Redis, and
 public HTTPS object storage for media assets.
 
+After deploying staging, run the smoke checks documented in
+[`docs/STAGING_SMOKE_TESTS.md`](./docs/STAGING_SMOKE_TESTS.md) or trigger the
+manual `Staging Smoke` GitHub Actions workflow.
+
 ---
 
 ## 💻 Development Commands
@@ -164,6 +168,13 @@ cd apps/api && alembic revision --autogenerate -m "description"
 docker compose up --build           # start everything
 docker compose down -v              # tear down
 docker compose logs -f api          # tail logs
+
+# Staging smoke checks
+SMOKE_API_BASE_URL=https://api-staging.example.com \
+SMOKE_FRONTEND_BASE_URL=https://app-staging.example.com \
+SMOKE_TEST_EMAIL=smoke@example.com \
+SMOKE_TEST_PASSWORD='replace-me' \
+python scripts/staging_smoke_test.py
 ```
 
 ---
