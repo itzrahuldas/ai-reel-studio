@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Final Meta submission runbook plus production launch, environment, and
+  staging-to-production promotion runbooks.
 - Meta App Review documentation package with reviewer instructions, permission
   justifications, screencast script, privacy/deletion checklists, and submission
   notes.
