@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Meta App Review documentation package with reviewer instructions, permission
+  justifications, screencast script, privacy/deletion checklists, and submission
+  notes.
 - Staging deployment setup artifacts: `.env.staging.example`,
   `docker-compose.staging.yml`, staging deploy/migration scripts, and staging
   deployment plan/checklist docs.

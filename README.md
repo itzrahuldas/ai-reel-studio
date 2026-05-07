@@ -147,6 +147,9 @@ Staging setup artifacts are available in
 `.env.staging.example`, `docker-compose.staging.yml`, and
 `scripts/deploy_staging.sh`.
 
+Meta App Review preparation docs are available in
+[`docs/meta-app-review/META_APP_REVIEW_PACKAGE.md`](./docs/meta-app-review/META_APP_REVIEW_PACKAGE.md).
+
 ---
 
 ## 💻 Development Commands
