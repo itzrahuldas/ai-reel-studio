@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.staging.example
+.local_private/
 
 # Node / frontend
 node_modules/
