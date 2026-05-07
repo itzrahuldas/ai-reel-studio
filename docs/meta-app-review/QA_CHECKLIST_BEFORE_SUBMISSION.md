@@ -20,6 +20,11 @@ Complete this checklist before submitting AI Reel Studio to Meta App Review.
 
 ## Permission Scope Alignment
 
+Backend OAuth scope set: `instagram_basic`, `instagram_content_publish`,
+`pages_show_list`.
+
+- [ ] Backend OAuth scope set is exactly `instagram_basic`,
+      `instagram_content_publish`, `pages_show_list`.
 - [ ] OAuth prompt requests only permissions documented in
       `PERMISSION_JUSTIFICATIONS.md`.
 - [ ] `instagram_basic` is requested and demonstrated by connected-account
@@ -28,10 +33,8 @@ Complete this checklist before submitting AI Reel Studio to Meta App Review.
       or schedule flow.
 - [ ] `pages_show_list` is requested and demonstrated by Page-to-Instagram
       account resolution.
-- [ ] `pages_read_engagement` is not requested unless staging proves it is
-      required for Page metadata lookup.
-- [ ] If `pages_read_engagement` is not required, it is removed from the OAuth
-      scope list before final review.
+- [ ] `pages_read_engagement` is not requested.
+- [ ] The OAuth prompt does not show `pages_read_engagement`.
 - [ ] No unused permissions are requested:
       - `instagram_manage_comments`
       - `instagram_manage_messages`
@@ -39,6 +42,7 @@ Complete this checklist before submitting AI Reel Studio to Meta App Review.
       - `business_management`
       - `pages_manage_posts`
       - `pages_manage_metadata`
+      - `pages_read_engagement`
 
 ## Reviewer Account And Meta Test Setup
 

@@ -9,6 +9,9 @@ management, Business Manager administration, or unrelated Page data.
 Request these permissions for the current Instagram Business/Creator publishing
 flow:
 
+Backend OAuth scope set: `instagram_basic`, `instagram_content_publish`,
+`pages_show_list`.
+
 - `instagram_basic`
 - `instagram_content_publish`
 - `pages_show_list`
@@ -21,15 +24,15 @@ Do not request these permissions:
 - `business_management`
 - `pages_manage_posts`
 - `pages_manage_metadata`
+- `pages_read_engagement`
 
-## Conditional Permission
+## Do Not Request Yet
 
-`pages_read_engagement` should be requested only if the deployed OAuth/API flow
-truly requires it to read Page metadata while resolving the linked Instagram
-Business account. AI Reel Studio does not display Page engagement metrics or Page
-insights. If Page lookup works with `pages_show_list` alone, mark
-`pages_read_engagement` as "do not request yet" and remove it from the OAuth
-scope list before final review.
+`pages_read_engagement` is not requested for the current review submission. AI
+Reel Studio does not display Page engagement metrics, read Page insights, or use
+Page engagement data. If a future feature needs Page engagement or insights,
+update the product UI, reviewer flow, backend scopes, and this package before
+requesting the permission.
 
 ## instagram_basic
 
@@ -204,38 +207,33 @@ does not publish to Facebook Pages.
 The user can connect the correct Instagram Business or Creator account through
 the required Facebook Page relationship.
 
-## pages_read_engagement - Conditional / Do Not Request Yet By Default
+## pages_read_engagement - Do Not Request Yet
 
-### Why AI Reel Studio Might Need It
+### Why AI Reel Studio Does Not Need It Now
 
-The current backend Page lookup uses Meta's Page account lookup to resolve
-`id`, `name`, and `instagram_business_account`. If the deployed OAuth/API flow
-requires `pages_read_engagement` for that Page metadata, request it and explain
-that it is used only for Page lookup during Instagram connection. If the Page
-lookup succeeds with `pages_show_list` alone, do not request this permission.
+The current backend Page lookup resolves `id`, `name`, and
+`instagram_business_account` so AI Reel Studio can connect the linked Instagram
+Business or Creator account. The app does not read Page engagement metrics,
+Page insights, Page feed content, comments, or messages. The current OAuth scope
+set uses `pages_show_list` for Page discovery/account resolution instead.
 
 ### Where It Is Used In The UI
 
-- Meta OAuth permission prompt, only if requested
-- `Dashboard` > `Integrations`, only to show the linked Page name after OAuth
+It is not used in the current UI and should not appear in the Meta OAuth prompt.
 
 ### Reviewer Step That Demonstrates It
 
-1. Click `Connect` on the Instagram integration.
-2. Grant Page access in Meta OAuth.
-3. Confirm the app can resolve the linked Facebook Page and Instagram Business
-   or Creator account.
+No reviewer step should demonstrate this permission for the current submission.
+If Meta shows `pages_read_engagement` in the OAuth prompt, the backend scopes are
+not aligned with this review package.
 
 ### Data Accessed
 
-- Page ID
-- Page name
-- linked Instagram Business account reference
+None. This permission is not requested.
 
 ### Data Stored
 
-- Page ID
-- Page name
+None. This permission is not requested.
 
 ### Data Not Accessed
 
@@ -248,11 +246,10 @@ lookup succeeds with `pages_show_list` alone, do not request this permission.
 
 ### Retention And Security Notes
 
-If requested, use this permission only for Page metadata needed by the
-Instagram-account connection flow. Do not use it for insights or analytics until
-the UI and reviewer flow demonstrate that feature.
+Do not store Page engagement data because the app does not request or access it.
 
 ### User Benefit
 
-The user can connect the correct Instagram professional account when Meta's Page
-lookup requires this permission for the linked Page metadata.
+Not applicable for the current submission. Avoiding this permission keeps the
+Meta review request limited to the minimum data needed for Instagram account
+connection and publishing.

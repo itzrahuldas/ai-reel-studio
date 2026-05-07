@@ -14,6 +14,9 @@ Instagram Business or Creator account through the official Instagram Graph API.
 
 We are requesting only the permissions needed for the reviewer flow:
 
+Backend OAuth scope set: `instagram_basic`, `instagram_content_publish`,
+`pages_show_list`.
+
 - `instagram_basic`: identifies the connected Instagram professional account and
   displays username/account type in AI Reel Studio.
 - `instagram_content_publish`: publishes the rendered MP4 Reel to the connected
@@ -22,9 +25,9 @@ We are requesting only the permissions needed for the reviewer flow:
   AI Reel Studio can identify the Page linked to the Instagram Business or
   Creator account.
 
-`pages_read_engagement` is not requested unless the deployed OAuth/API flow
-requires it for Page metadata lookup. AI Reel Studio does not read Page
-engagement metrics or insights.
+`pages_read_engagement` is not requested for this submission. AI Reel Studio does
+not read Page engagement metrics, Page insights, Page comments, Page messages,
+or Page feed content.
 
 AI Reel Studio does not access Instagram DMs, Instagram comments, ads, Business
 Manager assets, Facebook Page posts, or unrelated Facebook Page data.

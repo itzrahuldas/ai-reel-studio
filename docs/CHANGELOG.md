@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Aligned Instagram OAuth review scopes with the Meta App Review package by
+  requesting `pages_show_list` instead of unused `pages_read_engagement`.
 - Fixed web container runtime binding by forcing `HOSTNAME=0.0.0.0` in the
   Docker CMD so Docker healthcheck can probe `127.0.0.1`.
 - Fixed generation Celery async DB lifecycle so provider pipeline no longer

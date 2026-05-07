@@ -46,18 +46,19 @@ card visible in the Integrations page.
 
 ## Permission Recommendation
 
-Request only the permissions demonstrated in the reviewer flow:
+Request only the permissions demonstrated in the reviewer flow.
+
+Backend OAuth scope set: `instagram_basic`, `instagram_content_publish`,
+`pages_show_list`.
 
 - `instagram_basic`
 - `instagram_content_publish`
 - `pages_show_list`
 
-`pages_read_engagement` should be requested only if the deployed OAuth and Page
-lookup flow still requires it to read Page metadata while resolving the linked
-Instagram Business account. AI Reel Studio does not use Page engagement metrics,
-insights, comments, DMs, ads, Page post management, or Business Manager
-administration. If the Page lookup works with `pages_show_list` alone, mark
-`pages_read_engagement` as "do not request yet" in the Meta submission.
+Do not request `pages_read_engagement` for the current review submission. The
+current app resolves Page ID/name and linked Instagram Business account only; it
+does not read Page engagement metrics, insights, comments, DMs, ads, Page post
+management, or Business Manager administration.
 
 ## Exact User Flow For Review
 

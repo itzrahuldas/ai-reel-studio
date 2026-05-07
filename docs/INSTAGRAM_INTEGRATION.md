@@ -16,7 +16,7 @@ GET /api/v1/social-accounts/instagram/connect?workspace_id={id}
   https://www.facebook.com/v21.0/dialog/oauth?
     client_id={META_APP_ID}
     &redirect_uri={META_REDIRECT_URI}
-    &scope=instagram_basic,instagram_content_publish,pages_read_engagement
+    &scope=instagram_basic,instagram_content_publish,pages_show_list
     &response_type=code
     &state={signed_csrf_token}
 
@@ -163,7 +163,7 @@ Before submitting for Meta App Review, verify:
 - [ ] Required permissions requested:
   - `instagram_basic`
   - `instagram_content_publish`
-  - `pages_read_engagement`
+  - `pages_show_list`
 - [ ] Redirect URI registered in app settings
 - [ ] Privacy Policy URL configured in app settings
 - [ ] Terms of Service URL configured
