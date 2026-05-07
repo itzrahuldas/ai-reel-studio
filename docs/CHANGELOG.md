@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Public HTTPS staging deployment template, Caddy Compose overlay, Meta
+  readiness checklist, and VPS runbook for Meta App Review staging.
 - Final Meta submission runbook plus production launch, environment, and
   staging-to-production promotion runbooks.
 - Meta App Review documentation package with reviewer instructions, permission

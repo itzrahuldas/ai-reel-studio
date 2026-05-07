@@ -1,0 +1,10 @@
+# Replace app-staging.<your-domain> and api-staging.<your-domain> with the
+# real public staging hostnames before starting Caddy.
+
+app-staging.<your-domain> {
+    reverse_proxy web:3000
+}
+
+api-staging.<your-domain> {
+    reverse_proxy api:8000
+}

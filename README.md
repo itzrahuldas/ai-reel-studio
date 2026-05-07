@@ -147,6 +147,12 @@ Staging setup artifacts are available in
 `.env.staging.example`, `docker-compose.staging.yml`, and
 `scripts/deploy_staging.sh`.
 
+For public HTTPS staging on a VPS/cloud VM with Caddy, use
+[`docs/PUBLIC_STAGING_DEPLOYMENT_RUNBOOK.md`](./docs/PUBLIC_STAGING_DEPLOYMENT_RUNBOOK.md)
+with `.env.public-staging.example`,
+`docker-compose.public-staging.yml`, and
+`deploy/Caddyfile.public-staging`.
+
 Meta App Review preparation docs are available in
 [`docs/meta-app-review/META_APP_REVIEW_PACKAGE.md`](./docs/meta-app-review/META_APP_REVIEW_PACKAGE.md).
 Final launch runbooks are available in

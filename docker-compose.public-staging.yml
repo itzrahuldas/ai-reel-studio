@@ -1,0 +1,88 @@
+# Public HTTPS staging overlay.
+# Use with:
+# docker compose -f docker-compose.staging.yml -f docker-compose.public-staging.yml --env-file .env.public-staging up -d --build
+#
+# This overlay expects Docker Compose v2.24+ for the !reset tag used to remove
+# direct host bindings from web/api. If your server does not support it, upgrade
+# the Docker Compose plugin before deploying public staging.
+
+services:
+  api:
+    ports: !reset []
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    ports: !reset []
+    expose:
+      - "3000"
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode >= 200 && r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  worker-generation:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-rendering:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-publishing:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile.public-staging:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  staging_postgres_data:
+  staging_redis_data:
+  staging_media:
+  staging_worker_tmp:
+  caddy_data:
+  caddy_config:
