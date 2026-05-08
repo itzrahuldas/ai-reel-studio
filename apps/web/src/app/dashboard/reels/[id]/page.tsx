@@ -5,10 +5,19 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import type { ReelProject, ReelVersion, GenerationJob, RenderJob, PublishJob, UsageLimitError } from "@/lib/api-client";
+import type {
+  ReelProject,
+  ReelVersion,
+  GenerationJob,
+  RenderJob,
+  PublishJob,
+  UsageLimitError,
+  MediaAsset,
+} from "@/lib/api-client";
 import { isUsageLimitError } from "@/lib/api-client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE_CLEAN = API_BASE.replace(/\/$/, "");
 
 const GENERATING_STATUSES = new Set([
   "draft",
@@ -27,6 +36,33 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "bg-red-900 text-red-300",
   failed_script: "bg-red-900 text-red-300",
 };
+
+function isUnsafeLocalPath(value: string): boolean {
+  return (
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.startsWith("\\\\") ||
+    value.startsWith("/var/") ||
+    value.startsWith("/tmp/") ||
+    value.includes("\\")
+  );
+}
+
+function resolveMediaUrl(value?: string | null): string | null {
+  if (!value || isUnsafeLocalPath(value)) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/static/")) return `${API_BASE_CLEAN}${value}`;
+  if (value.startsWith("static/")) return `${API_BASE_CLEAN}/${value}`;
+  return null;
+}
+
+function assetMediaUrl(asset?: MediaAsset | null): string | null {
+  return resolveMediaUrl(asset?.media_url ?? asset?.public_url ?? asset?.url);
+}
+
+function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : null;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const label = status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -338,20 +374,21 @@ export default function ReelDetailPage() {
 
   const version = project?.latest_version;
 
-  const { data: videoAsset } = useQuery({
-    queryKey: ["media-asset", version?.video_asset_id],
-    queryFn: () => apiClient.getMediaAsset(version!.video_asset_id!),
-    enabled: !!version?.video_asset_id,
+  const videoAssetId = version?.video_asset_id ?? version?.rendered_asset_id;
+  const { data: videoAsset, isError: isVideoAssetError } = useQuery<MediaAsset>({
+    queryKey: ["media-asset", videoAssetId],
+    queryFn: () => apiClient.getMediaAsset(videoAssetId!),
+    enabled: !!videoAssetId,
   });
 
-  const { data: thumbnailAsset } = useQuery({
+  const { data: thumbnailAsset } = useQuery<MediaAsset>({
     queryKey: ["media-asset", version?.thumbnail_asset_id],
     queryFn: () => apiClient.getMediaAsset(version!.thumbnail_asset_id!),
     enabled: !!version?.thumbnail_asset_id,
   });
 
   const voiceoverAssetId = version?.voiceover_asset_id ?? version?.audio_asset_id;
-  const { data: voiceoverAsset } = useQuery({
+  const { data: voiceoverAsset } = useQuery<MediaAsset>({
     queryKey: ["media-asset", voiceoverAssetId],
     queryFn: () => apiClient.getMediaAsset(voiceoverAssetId!),
     enabled: !!voiceoverAssetId,
@@ -457,6 +494,25 @@ export default function ReelDetailPage() {
   const isGenerating = GENERATING_STATUSES.has(project.status);
   const isRendering = project.status === "rendering";
   const canRender = project.status === "ready_for_review" || project.status === "failed_render";
+  const videoUrl = resolveMediaUrl(version?.rendered_video_url) ?? assetMediaUrl(videoAsset);
+  const thumbnailUrl = resolveMediaUrl(version?.thumbnail_url) ?? assetMediaUrl(thumbnailAsset);
+  const audioUrl =
+    resolveMediaUrl(version?.voiceover_url) ??
+    resolveMediaUrl(version?.audio_url) ??
+    assetMediaUrl(voiceoverAsset);
+  const latestCompleteRenderJob = renderJobs?.find((job) => job.status === "complete");
+  const jobTtsProvider =
+    jobs
+      ?.map((job) => metadataString(job.provider_metadata_json, "tts_provider"))
+      .find((provider): provider is string => Boolean(provider)) ?? null;
+  const ttsProvider =
+    version?.voiceover_provider ??
+    metadataString(version?.edit_metadata, "tts_provider") ??
+    jobTtsProvider;
+  const aiProvider = metadataString(version?.edit_metadata, "ai_provider");
+  const voiceoverStatus = metadataString(version?.edit_metadata, "voiceover_status");
+  const isMockVoiceover =
+    ttsProvider === "mock" || (!ttsProvider && aiProvider === "mock" && voiceoverStatus === "generated");
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -597,32 +653,84 @@ export default function ReelDetailPage() {
                   <div className="text-4xl mb-2 animate-pulse">🚀</div>
                   <p className="text-gray-400 text-sm">Rendering Video...</p>
                 </div>
-              ) : videoAsset?.url ? (
+              ) : videoUrl ? (
                 <video
-                  src={videoAsset.url}
+                  src={videoUrl}
                   controls
+                  preload="metadata"
                   className="w-full h-full object-cover"
-                  poster={thumbnailAsset?.url ?? undefined}
+                  poster={thumbnailUrl ?? undefined}
                 />
               ) : (
                 <div className="text-center">
                   <div className="text-4xl mb-2">🎬</div>
-                  <p className="text-gray-500 text-sm">Video preview placeholder</p>
-                  <p className="text-gray-600 text-xs mt-1">Render the video to see the output</p>
+                  <p className="text-gray-500 text-sm">
+                    {latestCompleteRenderJob ? "Rendered video URL is missing" : "Video preview placeholder"}
+                  </p>
+                  <p className="text-gray-600 text-xs mt-1">
+                    {latestCompleteRenderJob
+                      ? "The render completed, but no public media URL was returned."
+                      : "Render the video to see the output"}
+                  </p>
                 </div>
               )}
             </div>
+            {videoUrl ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a
+                  href={videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-secondary text-xs"
+                >
+                  Open video in new tab
+                </a>
+                <a
+                  href={videoUrl}
+                  download={videoAsset?.filename ?? "reel.mp4"}
+                  className="btn-secondary text-xs"
+                >
+                  Download video
+                </a>
+              </div>
+            ) : (
+              (latestCompleteRenderJob || isVideoAssetError) && (
+                <div className="mt-3 rounded-lg border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200">
+                  The latest render is complete, but the Reel Detail page could not resolve a safe media URL.
+                  Check the rendered media asset&apos;s `s3_key` and `STORAGE_PUBLIC_BASE_URL`.
+                </div>
+              )
+            )}
           </SectionCard>
 
           <SectionCard title="Voiceover">
-            {voiceoverAsset?.url ? (
-              <audio src={voiceoverAsset.url} controls className="w-full" />
+            {audioUrl ? (
+              <div className="space-y-3">
+                <audio src={audioUrl} controls className="w-full" />
+                {isMockVoiceover && (
+                  <p className="rounded-lg border border-blue-800/50 bg-blue-950/30 p-3 text-xs text-blue-200">
+                    Mock voiceover is a silent placeholder for local testing. Use TTS_PROVIDER=openai for spoken voice.
+                  </p>
+                )}
+              </div>
             ) : (
-              <p className="text-sm text-gray-500">
-                {version?.edit_metadata?.voiceover_status === "failed"
-                  ? "Voiceover generation failed."
-                  : "No generated voiceover audio is attached."}
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">
+                  {version?.edit_metadata?.voiceover_status === "failed"
+                    ? "Voiceover generation failed."
+                    : "No generated voiceover audio is attached."}
+                </p>
+                {voiceoverAssetId && (
+                  <p className="rounded-lg border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200">
+                    A voiceover asset is attached, but no safe public audio URL was returned.
+                  </p>
+                )}
+                {isMockVoiceover && (
+                  <p className="rounded-lg border border-blue-800/50 bg-blue-950/30 p-3 text-xs text-blue-200">
+                    Mock voiceover is a silent placeholder for local testing. Use TTS_PROVIDER=openai for spoken voice.
+                  </p>
+                )}
+              </div>
             )}
           </SectionCard>
 
@@ -635,7 +743,7 @@ export default function ReelDetailPage() {
                   Connect Instagram
                 </Link>
               </div>
-            ) : !videoAsset?.url ? (
+            ) : !videoUrl ? (
               <div className="text-center py-4">
                 <p className="text-sm text-gray-500">Render video before publishing.</p>
               </div>

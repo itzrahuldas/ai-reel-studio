@@ -77,6 +77,13 @@ export interface ReelVersion {
   video_asset_id: string | null;
   rendered_asset_id: string | null;
   thumbnail_asset_id: string | null;
+  rendered_video_url?: string | null;
+  thumbnail_url?: string | null;
+  audio_url?: string | null;
+  voiceover_url?: string | null;
+  voiceover_provider?: string | null;
+  rendered_video_mime_type?: string | null;
+  audio_mime_type?: string | null;
   status: ReelProjectStatus;
   approved_at: string | null;
   created_at: string;
@@ -110,6 +117,10 @@ export interface MediaAsset {
   file_size: number | null;
   status: string;
   url: string | null;
+  public_url?: string | null;
+  media_url?: string | null;
+  provider?: string | null;
+  renderer?: string | null;
   created_at: string;
 }
 

@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md, SECURITY.md, LICENSE
 
 ### Fixed
+- Fixed Reel Detail media previews by returning safe public media URLs for
+  rendered videos, thumbnails, and voiceovers, and by showing mock TTS as a
+  silent local-testing placeholder.
 - Aligned Instagram OAuth review scopes with the Meta App Review package by
   requesting `pages_show_list` instead of unused `pages_read_engagement`.
 - Fixed web container runtime binding by forcing `HOSTNAME=0.0.0.0` in the

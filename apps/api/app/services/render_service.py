@@ -7,6 +7,7 @@ and updates ReelProject/ReelVersion status.
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import structlog
 from fastapi import HTTPException
@@ -48,19 +49,66 @@ def _safe_error_message(exc: Exception, max_length: int = ERROR_MESSAGE_MAX_CHAR
 
 # ── URL Helper ────────────────────────────────────────────────────────────────
 
-def build_media_url(asset: MediaAsset, base_url: str = "") -> str:
+def _safe_storage_key(s3_key: str) -> str:
+    """Return a URL-safe storage key without exposing accidental filesystem paths."""
+    normalized_key = s3_key.replace("\\", "/")
+    if normalized_key.startswith(("//", "/var/", "/tmp/", "/home/", "/Users/", "/mnt/", "/opt/")):
+        normalized_key = normalized_key.rsplit("/", 1)[-1]
+    key = normalized_key.lstrip("/")
+    first_segment = key.split("/", 1)[0]
+    if ":" in first_segment:
+        key = key.rsplit("/", 1)[-1]
+    return "/".join(quote(segment) for segment in key.split("/") if segment)
+
+
+def _media_base_url(base_url: str | None = None) -> str:
+    if base_url:
+        clean_base = base_url.rstrip("/")
+        return clean_base if clean_base.endswith("/static") else f"{clean_base}/static"
+
+    if settings.STORAGE_PUBLIC_BASE_URL:
+        return settings.STORAGE_PUBLIC_BASE_URL.rstrip("/")
+
+    if settings.API_PUBLIC_BASE_URL:
+        return f"{settings.API_PUBLIC_BASE_URL.rstrip('/')}/static"
+
+    return "/static"
+
+
+def build_media_url(asset: MediaAsset, base_url: str | None = None) -> str:
     """
     Build a safe public URL for a MediaAsset.
 
-    For local storage: /static/{s3_key} (served by StaticFiles mount)
+    For local storage: {STORAGE_PUBLIC_BASE_URL}/{s3_key}
     For S3/prod: the s3_key would be used with a CDN or pre-signed URL.
 
     NEVER exposes raw filesystem paths.
     """
-    if asset.s3_bucket == "local":
-        return f"{base_url}/static/{asset.s3_key}"
-    # Future: return CDN/pre-signed URL
-    return f"{base_url}/static/{asset.s3_key}"
+    safe_key = _safe_storage_key(asset.s3_key)
+    return f"{_media_base_url(base_url)}/{safe_key}"
+
+
+def build_media_asset_response(asset: MediaAsset) -> dict:
+    """Build a safe media asset response dict with absolute media URLs."""
+    safe_key = _safe_storage_key(asset.s3_key)
+    url = build_media_url(asset)
+    metadata = asset.metadata_ if isinstance(asset.metadata_, dict) else {}
+    return {
+        "id": str(asset.id),
+        "workspace_id": str(asset.workspace_id),
+        "asset_type": asset.asset_type.value,
+        "s3_key": safe_key,
+        "filename": safe_key.rsplit("/", 1)[-1],
+        "mime_type": asset.mime_type,
+        "file_size": asset.file_size,
+        "status": asset.status.value,
+        "url": url,
+        "public_url": url,
+        "media_url": url,
+        "provider": metadata.get("provider"),
+        "renderer": metadata.get("renderer"),
+        "created_at": asset.created_at.isoformat() if asset.created_at else None,
+    }
 
 
 def get_local_storage_path(asset: MediaAsset) -> Path | None:
@@ -370,6 +418,7 @@ async def _run_render_pipeline_inline(
 
             # ── Update version ────────────────────────────────────────────────
             version.video_asset_id = video_asset.id
+            version.rendered_asset_id = video_asset.id
             version.thumbnail_asset_id = thumb_asset.id
             version.status = ReelProjectStatus.READY_TO_PUBLISH
 

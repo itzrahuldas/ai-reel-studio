@@ -20,6 +20,11 @@ Mock remains the default and does not call external APIs. OpenAI mode uses the
 server-only `AI_API_KEY`; missing keys return a setup error before usage is
 consumed.
 
+`TTS_PROVIDER=mock` writes a valid silent placeholder audio file so local render
+and preview flows can be tested without paid provider credentials. It is not
+expected to produce spoken narration. Real spoken voice requires
+`TTS_PROVIDER=openai` with valid `AI_API_KEY` and TTS configuration.
+
 Runtime flow:
 
 1. Usage is validated with the existing job idempotency key.
@@ -218,6 +223,15 @@ class TTSResult(BaseModel):
 # - OpenAITTSProvider (tts-1 / tts-1-hd)
 # - GoogleCloudTTSProvider
 # - MockTTSProvider
+```
+
+Local preview uses the media URL returned by the API, built from
+`STORAGE_PUBLIC_BASE_URL` and the media asset `s3_key`. For local staging,
+verify audio reachability with:
+
+```bash
+curl -I http://localhost:8000/static/<asset-key>
+ffprobe <media-file>
 ```
 
 ---

@@ -16,6 +16,34 @@ Subtitles are still burned into the MP4 from `reel_versions.subtitle_lines`.
 When voiceover duration is available, subtitle timings are proportionally
 aligned to that duration before the version is marked ready for review.
 
+In `TTS_PROVIDER=mock` mode, the voiceover asset is a valid playable silent
+placeholder for local testing. Real spoken narration requires
+`TTS_PROVIDER=openai` plus valid server-side `AI_API_KEY` and TTS settings.
+
+## Local Media Preview
+
+Rendered videos, thumbnails, and voiceovers are served to the web app through
+public media URLs derived from `STORAGE_PUBLIC_BASE_URL`. In local staging this
+should resolve to:
+
+```text
+http://localhost:8000/static/<asset-key>
+```
+
+The frontend should use media URLs returned by the API, not raw storage paths.
+Local filesystem paths such as `/var/lib/...` or `C:\...` must never be exposed
+to the browser.
+
+Troubleshooting:
+
+```bash
+curl -I http://localhost:8000/static/<asset-key>
+ffprobe <media-file>
+```
+
+On the Reel Detail page, use the "Open video in new tab" link to verify the
+exact URL the browser is loading.
+
 ## 1. Target MP4 Format
 
 | Property        | Value                        |

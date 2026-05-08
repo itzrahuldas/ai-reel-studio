@@ -95,6 +95,10 @@ class MediaAssetResponse(OrmBaseModel):
     file_size: int | None
     status: str
     url: str | None = None
+    public_url: str | None = None
+    media_url: str | None = None
+    provider: str | None = None
+    renderer: str | None = None
     created_at: datetime
 
 
@@ -121,6 +125,13 @@ class ReelVersionResponse(OrmBaseModel):
     video_asset_id: UUID | None = None
     rendered_asset_id: UUID | None = None
     thumbnail_asset_id: UUID | None = None
+    rendered_video_url: str | None = None
+    thumbnail_url: str | None = None
+    audio_url: str | None = None
+    voiceover_url: str | None = None
+    voiceover_provider: str | None = None
+    rendered_video_mime_type: str | None = None
+    audio_mime_type: str | None = None
     status: str
     approved_at: datetime | None
     created_at: datetime
