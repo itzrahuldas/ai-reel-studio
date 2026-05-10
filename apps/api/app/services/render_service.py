@@ -30,6 +30,7 @@ from app.models.models import (
 )
 from app.services.ai.base import SubtitleLine
 from app.services.rendering.ffmpeg_renderer import FFmpegRenderer, RenderParams
+from app.services.rendering.mock_visuals import generate_mock_storyboard
 from app.services.rendering.subtitles import write_srt_file
 from app.services.usage_service import consume_usage
 
@@ -93,6 +94,15 @@ def build_media_asset_response(asset: MediaAsset) -> dict:
     safe_key = _safe_storage_key(asset.s3_key)
     url = build_media_url(asset)
     metadata = asset.metadata_ if isinstance(asset.metadata_, dict) else {}
+    # Expose safe render metadata fields only — never expose local filesystem paths
+    _SAFE_METADATA_KEYS = {
+        "visual_source", "mock_visual_theme", "mock_visual_scene_count",
+        "generated_scene_count", "scene_count", "multi_scene",
+        "has_audio", "has_subtitles", "renderer",
+        "duration_seconds", "width", "height", "fps",
+        "render_time_seconds", "provider",
+    }
+    safe_metadata = {k: v for k, v in metadata.items() if k in _SAFE_METADATA_KEYS}
     return {
         "id": str(asset.id),
         "workspace_id": str(asset.workspace_id),
@@ -107,6 +117,7 @@ def build_media_asset_response(asset: MediaAsset) -> dict:
         "media_url": url,
         "provider": metadata.get("provider"),
         "renderer": metadata.get("renderer"),
+        "metadata": safe_metadata,
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
     }
 
@@ -335,6 +346,49 @@ async def _run_render_pipeline_inline(
                     logger.warning("subtitle_write_failed", error=str(e))
                     srt_path = None
 
+            # ── Generate mock visual scene images (when no real source image) ─────
+            scene_image_paths: list[Path] | None = None
+            visual_source = "source_image" if project.source_image_id else "mock_storyboard"
+            mock_theme_name: str | None = None
+            mock_scene_count: int | None = None
+
+            if not project.source_image_id:
+                try:
+                    raw_scenes = version.scenes if hasattr(version, "scenes") and version.scenes else None
+                    scene_dicts: list[dict] | None = None
+                    if raw_scenes:
+                        scene_dicts = [
+                            sl if isinstance(sl, dict) else sl.model_dump()
+                            for sl in raw_scenes
+                        ]
+                    mock_result = generate_mock_storyboard(
+                        prompt=project.prompt,
+                        project_id=project.id,
+                        version_id=version.id,
+                        storage_root=settings.LOCAL_STORAGE_PATH,
+                        scenes=scene_dicts,
+                        scene_count=3,  # fallback if no scenes stored
+                    )
+                    if mock_result.scene_paths:
+                        scene_image_paths = mock_result.scene_paths
+                        # Use first scene as fallback image_path
+                        image_path = mock_result.scene_paths[0]
+                        mock_theme_name = mock_result.theme_name
+                        mock_scene_count = mock_result.scene_count
+                        logger.info(
+                            "mock_visual.using_storyboard_scenes",
+                            project_id=str(project.id),
+                            theme=mock_theme_name,
+                            scene_count=mock_scene_count,
+                        )
+                except Exception as mock_exc:
+                    logger.warning(
+                        "mock_visual.generation_failed",
+                        project_id=str(project.id),
+                        error=str(mock_exc),
+                    )
+                    # Fallback: image_path is already the solid-color placeholder
+
             # ── Run FFmpeg renderer ───────────────────────────────────────────
             renderer = FFmpegRenderer()
 
@@ -364,11 +418,30 @@ async def _run_render_pipeline_inline(
                 audio_path=audio_path,
                 srt_path=srt_path,
                 cta_text=cta_text,
+                scene_image_paths=scene_image_paths,
             )
             result = await renderer.render(params)
 
             # ── Create MediaAsset for video ───────────────────────────────────
             video_size = result.output_path.stat().st_size if result.output_path.exists() else 0
+            video_metadata: dict = {
+                "storage_provider": "local",
+                "storage_path": str(result.output_path),
+                "renderer": result.renderer,
+                "audio_asset_id": str(version.voiceover_asset_id or version.audio_asset_id)
+                if audio_path
+                else None,
+                "visual_source": visual_source,
+                "has_audio": params.audio_path is not None,
+                "has_subtitles": params.srt_path is not None,
+                **result.metadata,
+            }
+            if mock_theme_name:
+                video_metadata["mock_visual_theme"] = mock_theme_name
+            if mock_scene_count is not None:
+                video_metadata["mock_visual_scene_count"] = mock_scene_count
+                video_metadata["generated_scene_count"] = mock_scene_count
+
             video_asset = MediaAsset(
                 workspace_id=project.workspace_id,
                 project_id=project.id,
@@ -380,20 +453,25 @@ async def _run_render_pipeline_inline(
                 mime_type="video/mp4",
                 file_size=video_size,
                 status=MediaAssetStatus.READY,
-                metadata_={
-                    "storage_provider": "local",
-                    "storage_path": str(result.output_path),
-                    "renderer": result.renderer,
-                    "audio_asset_id": str(version.voiceover_asset_id or version.audio_asset_id)
-                    if audio_path
-                    else None,
-                    **result.metadata,
-                },
+                metadata_=video_metadata,
             )
             db.add(video_asset)
             await db.flush()
 
             # ── Create MediaAsset for thumbnail ───────────────────────────────
+            # If FFmpeg didn't produce a thumbnail (e.g. placeholder mode),
+            # copy the first mock visual scene image as the thumbnail.
+            if not result.thumbnail_path.exists() and scene_image_paths:
+                try:
+                    import shutil
+                    shutil.copy2(scene_image_paths[0], result.thumbnail_path)
+                    logger.info(
+                        "render_pipeline.using_first_scene_as_thumbnail",
+                        scene=str(scene_image_paths[0].name),
+                    )
+                except Exception as thumb_exc:
+                    logger.warning("render_pipeline.thumbnail_copy_failed", error=str(thumb_exc))
+
             thumb_size = (
                 result.thumbnail_path.stat().st_size if result.thumbnail_path.exists() else 0
             )

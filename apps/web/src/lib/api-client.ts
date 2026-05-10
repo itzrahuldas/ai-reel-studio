@@ -121,6 +121,8 @@ export interface MediaAsset {
   media_url?: string | null;
   provider?: string | null;
   renderer?: string | null;
+  /** Render metadata: visual_source, mock_visual_theme, generated_scene_count, etc. */
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 

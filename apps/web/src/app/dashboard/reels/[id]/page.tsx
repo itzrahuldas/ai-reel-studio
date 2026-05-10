@@ -513,6 +513,18 @@ export default function ReelDetailPage() {
   const voiceoverStatus = metadataString(version?.edit_metadata, "voiceover_status");
   const isMockVoiceover =
     ttsProvider === "mock" || (!ttsProvider && aiProvider === "mock" && voiceoverStatus === "generated");
+  const videoMetadata = videoAsset?.metadata ?? {};
+  const isMockVisual =
+    videoMetadata.visual_source === "mock_storyboard" ||
+    (videoAsset && !videoMetadata.visual_source && aiProvider === "mock");
+  const mockVisualTheme = typeof videoMetadata.mock_visual_theme === "string"
+    ? videoMetadata.mock_visual_theme
+    : null;
+  const mockVisualSceneCount = typeof videoMetadata.generated_scene_count === "number"
+    ? videoMetadata.generated_scene_count
+    : typeof videoMetadata.mock_visual_scene_count === "number"
+    ? videoMetadata.mock_visual_scene_count
+    : null;
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -676,22 +688,32 @@ export default function ReelDetailPage() {
               )}
             </div>
             {videoUrl ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <a
-                  href={videoUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-secondary text-xs"
-                >
-                  Open video in new tab
-                </a>
-                <a
-                  href={videoUrl}
-                  download={videoAsset?.filename ?? "reel.mp4"}
-                  className="btn-secondary text-xs"
-                >
-                  Download video
-                </a>
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={videoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-secondary text-xs"
+                  >
+                    Open video in new tab
+                  </a>
+                  <a
+                    href={videoUrl}
+                    download={videoAsset?.filename ?? "reel.mp4"}
+                    className="btn-secondary text-xs"
+                  >
+                    Download video
+                  </a>
+                </div>
+                {isMockVisual && (
+                  <p className="rounded-lg border border-violet-800/50 bg-violet-950/30 p-3 text-xs text-violet-200">
+                    🎨 Mock visual storyboard render
+                    {mockVisualTheme && <> · theme: <span className="font-semibold text-violet-300">{mockVisualTheme}</span></>}
+                    {mockVisualSceneCount && <> · {mockVisualSceneCount} scenes</>}
+                    . Prompt-specific local preview. Real AI visuals can be enabled with a visual provider.
+                  </p>
+                )}
               </div>
             ) : (
               (latestCompleteRenderJob || isVideoAssetError) && (

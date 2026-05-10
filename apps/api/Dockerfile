@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl build-essential \
+    && apt-get install -y --no-install-recommends ffmpeg curl build-essential fonts-dejavu-core \
     && apt-get clean
 
 COPY pyproject.toml README.md ./

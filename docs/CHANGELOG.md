@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Mock visual storyboard renderer** (`feat(render): generate prompt-specific mock visuals`):
+  - New `apps/api/app/services/rendering/mock_visuals.py` generates one 1080×1920
+    JPEG scene card per storyboard scene using Pillow.
+  - Keyword-based theme detection: coffee, fitness, travel, beauty, tech, education,
+    realestate, finance, generic — each with a unique colour palette, accent shapes,
+    headline style, and motif label.
+  - Scenes are stored under `LOCAL_STORAGE_PATH/mock_visuals/` — local paths are
+    never exposed in the public API.
+  - `FFmpegRenderer` extended with `_build_multi_scene_command()`: builds an FFmpeg
+    xfade crossfade slideshow when `scene_image_paths` is provided in `RenderParams`.
+  - `render_service.py` calls `generate_mock_storyboard()` before rendering when no
+    real source image is uploaded; passes scene image paths to the renderer.
+  - Thumbnail fallback: when FFmpeg is not available, the first scene card image is
+    copied as the thumbnail.
+  - `build_media_asset_response()` now exposes a safe metadata subset in the API
+    response (`visual_source`, `mock_visual_theme`, `generated_scene_count`, etc.)
+    — `storage_path` is never included.
+  - Frontend Reel Detail page shows a labeled notice when mock storyboard render is
+    detected: theme name and scene count are shown.
+  - `Pillow>=10.0.0` added to `apps/api/pyproject.toml`.
+  - Unit tests in `apps/api/tests/unit/test_mock_visuals.py` covering theme detection,
+    image dimensions, prompt differentiation, API path safety, and pipeline integration.
+  - `docs/VIDEO_RENDERING.md` updated with mock storyboard renderer documentation.
 - Public HTTPS staging deployment template, Caddy Compose overlay, Meta
   readiness checklist, and VPS runbook for Meta App Review staging.
 - Final Meta submission runbook plus production launch, environment, and
