@@ -6,7 +6,7 @@ Covers:
 2. render_reel_task calls _run_render_pipeline_with_db (not _run_render_pipeline_inline)
    so the global AsyncSessionLocal is never touched from a Celery task.
 3. A pipeline that returns False → task returns status=failed, no complete log.
-4. A pipeline that raises  → task retries, then returns status=failed.
+4. A pipeline that raises  → task logs safely and returns status=failed immediately (no retry).
 5. Mock visual metadata is plumbed through when pipeline succeeds.
 """
 

@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager
 
 import structlog
 from celery import Task
-from celery.exceptions import MaxRetriesExceededError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -138,21 +137,27 @@ def render_reel_task(self: Task, project_id: str, version_id: str, render_job_id
         )
         return {"version_id": version_id, "render_job_id": render_job_id, "status": "complete"}
     except Exception as exc:
+        safe_error = _safe_error_message(exc)
         logger.exception(
             "render_reel_task.error",
             project_id=project_id,
             version_id=version_id,
             render_job_id=render_job_id,
             error_type=type(exc).__name__,
-            error=_safe_error_message(exc),
+            error=safe_error,
         )
-        try:
-            raise self.retry(exc=exc, countdown=30)
-        except MaxRetriesExceededError:
-            return {
-                "version_id": version_id,
-                "render_job_id": render_job_id,
-                "status": "failed",
-                "error": _safe_error_message(exc),
-                "error_type": type(exc).__name__,
-            }
+        # Do NOT call self.retry here.
+        # _run_render_pipeline_with_db already catches all recoverable errors
+        # internally, writes render_jobs.status=failed to the DB, and returns
+        # False (which is handled above). Any exception that reaches this point
+        # is genuinely unrecoverable (DB unreachable, OOM, asyncpg loop error,
+        # etc.) — retrying would hit the same wall. Return a structured result
+        # so Celery task state is deterministic and tests remain reliable.
+        return {
+            "project_id": project_id,
+            "version_id": version_id,
+            "render_job_id": render_job_id,
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "error": safe_error,
+        }

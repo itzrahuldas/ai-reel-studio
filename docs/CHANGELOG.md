@@ -29,7 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `_run_render_with_isolated_session`; never touches global `AsyncSessionLocal`.
   - Test file `tests/test_worker_render_task.py` rewritten with 5 focused tests
     covering: session scope engine disposal, task routing to `_with_db` not
-    `_inline`, failed pipeline, exception/retry path, and inline delegation.
+    `_inline`, failed pipeline, exception path, and inline delegation.
+- **Render task exception result** (`fix(worker): return failed render task results on exceptions`):
+  - `render_reel_task` previously called `self.retry(exc=exc)` on unexpected
+    exceptions, then caught `MaxRetriesExceededError` to return a dict.
+    Calling `.run()` in tests bypasses Celery retry machinery — `Retry` escaped
+    as an unhandled exception, making tests non-deterministic.
+  - Fix: removed `self.retry` entirely. `_run_render_pipeline_with_db` already
+    handles all recoverable errors internally (catches, writes `status=failed` to
+    the DB, returns `False`). Any exception that escapes to the task level is
+    unrecoverable — retrying would hit the same error. Return a structured
+    `{"status": "failed", "error_type": ..., "error": ...}` dict immediately.
+  - Removed now-unused `celery.exceptions.MaxRetriesExceededError` import.
 
 ### Added
 - **Mock visual storyboard renderer** (`feat(render): generate prompt-specific mock visuals`):
