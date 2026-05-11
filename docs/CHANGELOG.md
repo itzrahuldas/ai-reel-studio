@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Celery render async DB isolation** (`fix(worker): isolate render async database sessions`):
+  - `render_reel_task` was calling `_run_render_pipeline_inline()` which opens
+    the global `AsyncSessionLocal` (backed by a module-level `create_async_engine`).
+    When Celery's prefork worker calls `asyncio.run()`, a new event loop is created
+    but asyncpg connection futures were attached to a previous loop, causing:
+    `RuntimeError: Task got Future attached to a different loop`.
+  - Fix: added `render_session_scope()` async context manager in
+    `apps/worker/app/tasks/render_reel.py` (mirrors `scheduler_session_scope()`).
+    It creates a **fresh** `create_async_engine` + `async_sessionmaker` inside the
+    task's own event loop, disposes the engine in `finally`.
+  - Added `_run_render_pipeline_with_db(db, ...)` to `render_service.py`:
+    accepts an explicit `AsyncSession` so the pipeline is loop-agnostic.
+  - `_run_render_pipeline_inline` is now a thin wrapper that opens
+    `AsyncSessionLocal` and delegates to `_run_render_pipeline_with_db` —
+    the API sync path is unchanged.
+  - Worker task calls `_run_render_pipeline_with_db` via
+    `_run_render_with_isolated_session`; never touches global `AsyncSessionLocal`.
+  - Test file `tests/test_worker_render_task.py` rewritten with 5 focused tests
+    covering: session scope engine disposal, task routing to `_with_db` not
+    `_inline`, failed pipeline, exception/retry path, and inline delegation.
+
 ### Added
 - **Mock visual storyboard renderer** (`feat(render): generate prompt-specific mock visuals`):
   - New `apps/api/app/services/rendering/mock_visuals.py` generates one 1080×1920
