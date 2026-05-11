@@ -10,6 +10,7 @@ import structlog
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DbSession
+from app.models.models import MediaAsset
 from app.schemas.schemas import (
     AIProviderStatusResponse,
     CreatePublishJobRequest,
@@ -35,12 +36,51 @@ from app.services.reel_project import (
     get_project_jobs,
     get_project_with_version,
     get_projects,
+    get_reel_version_media_assets,
     regenerate_reel_project,
 )
-from app.services.render_service import create_render_job, get_render_jobs
+from app.services.render_service import build_media_url, create_render_job, get_render_jobs
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+def _metadata_value(asset: MediaAsset | None, key: str) -> str | None:
+    metadata = asset.metadata_ if asset and isinstance(asset.metadata_, dict) else {}
+    value = metadata.get(key)
+    return str(value) if value is not None else None
+
+
+def _enrich_version_media(
+    version: ReelVersionResponse,
+    media_assets: dict[str, MediaAsset | None] | None,
+) -> ReelVersionResponse:
+    media_assets = media_assets or {}
+    rendered_video = media_assets.get("rendered_video")
+    thumbnail = media_assets.get("thumbnail")
+    voiceover_audio = media_assets.get("voiceover_audio")
+
+    if rendered_video:
+        url = build_media_url(rendered_video)
+        version.rendered_video_url = url
+        version.rendered_video_mime_type = rendered_video.mime_type
+        version.video_asset_id = version.video_asset_id or rendered_video.id
+        version.rendered_asset_id = version.rendered_asset_id or rendered_video.id
+
+    if thumbnail:
+        version.thumbnail_url = build_media_url(thumbnail)
+        version.thumbnail_asset_id = version.thumbnail_asset_id or thumbnail.id
+
+    if voiceover_audio:
+        url = build_media_url(voiceover_audio)
+        version.audio_url = url
+        version.voiceover_url = url
+        version.audio_mime_type = voiceover_audio.mime_type
+        version.voiceover_provider = _metadata_value(voiceover_audio, "provider")
+        version.audio_asset_id = version.audio_asset_id or voiceover_audio.id
+        version.voiceover_asset_id = version.voiceover_asset_id or voiceover_audio.id
+
+    return version
 
 
 @router.post("/", status_code=201, response_model=CreateReelProjectResponse)
@@ -92,10 +132,14 @@ async def get_project(
     data = await get_project_with_version(db, current_user.id, project_id)
     project = data["project"]
     latest_version = data["latest_version"]
+    media_assets = data.get("media_assets")
 
     resp = ReelProjectResponse.model_validate(project)
     if latest_version:
-        resp.latest_version = ReelVersionResponse.model_validate(latest_version)
+        resp.latest_version = _enrich_version_media(
+            ReelVersionResponse.model_validate(latest_version),
+            media_assets,
+        )
 
     return resp
 
@@ -137,10 +181,23 @@ async def render_project(
 ) -> Any:
     """Create a render job for the specified or latest version and enqueue FFmpeg render task."""
     render_job, project, version = await create_render_job(db, current_user.id, project_id, version_id)
+    has_media_asset_ids = any(
+        [
+            version.video_asset_id,
+            version.rendered_asset_id,
+            version.thumbnail_asset_id,
+            version.voiceover_asset_id,
+            version.audio_asset_id,
+        ]
+    )
+    media_assets = await get_reel_version_media_assets(db, version) if has_media_asset_ids else {}
     return {
         "render_job": RenderJobResponse.model_validate(render_job),
         "project": ReelProjectResponse.model_validate(project),
-        "version": ReelVersionResponse.model_validate(version),
+        "version": _enrich_version_media(
+            ReelVersionResponse.model_validate(version),
+            media_assets,
+        ),
     }
 
 

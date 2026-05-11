@@ -14,11 +14,12 @@ Test categories:
 - Worker task (idempotency, failure handling)
 """
 
-import importlib
 import asyncio
+import importlib
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -27,14 +28,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.main import app
 from app.models.models import (
     GenerationJob,
     JobStatus,
+    MediaAsset,
+    MediaAssetStatus,
+    MediaAssetType,
     ReelProject,
     ReelProjectStatus,
     ReelVersion,
 )
+from app.services.render_service import build_media_asset_response, build_media_url
 
 client = TestClient(app)
 
@@ -191,6 +197,30 @@ def _make_render_job():
     return j
 
 
+def _make_media_asset(
+    asset_type: MediaAssetType,
+    s3_key: str,
+    mime_type: str,
+    metadata: dict | None = None,
+) -> MediaAsset:
+    return MediaAsset(
+        id=uuid4(),
+        workspace_id=uuid4(),
+        project_id=FAKE_PROJECT_ID,
+        version_id=FAKE_VERSION_ID,
+        asset_type=asset_type,
+        s3_key=s3_key,
+        s3_bucket="local",
+        filename=s3_key.rsplit("/", 1)[-1],
+        mime_type=mime_type,
+        file_size=1234,
+        status=MediaAssetStatus.READY,
+        metadata_=metadata or {},
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+
 # ── Media Asset Upload Tests ──────────────────────────────────────────────────
 
 @patch("app.api.deps.decode_token")
@@ -218,6 +248,74 @@ def test_upload_media_asset_unauthenticated():
         files={"file": ("img.jpg", b"data", "image/jpeg")},
     )
     assert response.status_code == 401
+
+
+def test_local_media_url_uses_storage_public_base(monkeypatch):
+    """Local media URLs should use STORAGE_PUBLIC_BASE_URL and the relative s3_key."""
+    monkeypatch.setattr(settings, "STORAGE_PUBLIC_BASE_URL", "http://localhost:8000/static")
+    asset = _make_media_asset(
+        MediaAssetType.RENDERED_VIDEO,
+        "renders/reel-test.mp4",
+        "video/mp4",
+    )
+
+    assert build_media_url(asset) == "http://localhost:8000/static/renders/reel-test.mp4"
+
+
+def test_media_asset_response_does_not_expose_local_storage_path(monkeypatch):
+    """Safe asset responses include public URLs, not raw filesystem metadata."""
+    monkeypatch.setattr(settings, "STORAGE_PUBLIC_BASE_URL", "http://localhost:8000/static")
+    asset = _make_media_asset(
+        MediaAssetType.RENDERED_VIDEO,
+        "renders/reel-test.mp4",
+        "video/mp4",
+        metadata={"storage_path": "/var/lib/ai-reel-studio/media/renders/reel-test.mp4"},
+    )
+
+    response = build_media_asset_response(asset)
+
+    assert response["url"] == "http://localhost:8000/static/renders/reel-test.mp4"
+    assert response["media_url"] == response["url"]
+    assert response["public_url"] == response["url"]
+    assert "storage_path" not in response
+    assert "/var/lib" not in response["url"]
+    assert "/var/lib" not in response["s3_key"]
+
+
+def test_media_url_sanitizes_accidental_filesystem_key(monkeypatch):
+    """Even malformed s3_key values must not leak local filesystem prefixes."""
+    monkeypatch.setattr(settings, "STORAGE_PUBLIC_BASE_URL", "http://localhost:8000/static")
+    asset = _make_media_asset(
+        MediaAssetType.RENDERED_VIDEO,
+        r"C:\private\media\reel-test.mp4",
+        "video/mp4",
+    )
+
+    url = build_media_url(asset)
+
+    assert url == "http://localhost:8000/static/reel-test.mp4"
+    assert "C:" not in url
+    assert "\\" not in url
+
+
+def test_media_url_sanitizes_accidental_posix_filesystem_key(monkeypatch):
+    """POSIX storage paths should be collapsed to the basename before URL exposure."""
+    monkeypatch.setattr(settings, "STORAGE_PUBLIC_BASE_URL", "http://localhost:8000/static")
+    asset = _make_media_asset(
+        MediaAssetType.RENDERED_VIDEO,
+        "/var/lib/ai-reel-studio/media/renders/reel-test.mp4",
+        "video/mp4",
+    )
+
+    url = build_media_url(asset)
+
+    assert url == "http://localhost:8000/static/reel-test.mp4"
+    assert "/var/lib" not in url
+
+    response = build_media_asset_response(asset)
+
+    assert response["s3_key"] == "reel-test.mp4"
+    assert response["filename"] == "reel-test.mp4"
 
 
 # ── Reel Project Creation Tests ───────────────────────────────────────────────
@@ -315,6 +413,56 @@ def test_get_project_with_version_detail(mock_get, mock_decode):
     assert data["latest_version"]["hook"] == "Wait until you see this!"
     assert data["latest_version"]["script"] is not None
     assert data["latest_version"]["hashtags"] == ["#ai", "#reels"]
+
+
+@patch("app.api.deps.decode_token")
+@patch("app.api.v1.routers.reel_projects.get_project_with_version", new_callable=AsyncMock)
+def test_get_project_detail_includes_safe_media_urls(mock_get, mock_decode, monkeypatch):
+    """Reel detail response includes playable media URLs without filesystem paths."""
+    _authenticate_user()
+    monkeypatch.setattr(settings, "STORAGE_PUBLIC_BASE_URL", "http://localhost:8000/static")
+    mock_decode.return_value = {"sub": FAKE_USER_ID, "type": "access"}
+    version = _make_version()
+    video_asset = _make_media_asset(
+        MediaAssetType.RENDERED_VIDEO,
+        "renders/reel-test.mp4",
+        "video/mp4",
+        metadata={"storage_path": "/var/lib/ai-reel-studio/media/renders/reel-test.mp4"},
+    )
+    thumbnail_asset = _make_media_asset(
+        MediaAssetType.THUMBNAIL,
+        "renders/thumb-test.jpg",
+        "image/jpeg",
+    )
+    audio_asset = _make_media_asset(
+        MediaAssetType.AUDIO,
+        "voiceovers/voiceover-test.wav",
+        "audio/wav",
+        metadata={"provider": "mock"},
+    )
+    version.video_asset_id = video_asset.id
+    version.thumbnail_asset_id = thumbnail_asset.id
+    version.voiceover_asset_id = audio_asset.id
+    mock_get.return_value = {
+        "project": _make_project(),
+        "latest_version": version,
+        "media_assets": {
+            "rendered_video": video_asset,
+            "thumbnail": thumbnail_asset,
+            "voiceover_audio": audio_asset,
+        },
+    }
+
+    response = client.get(f"/api/v1/reel-projects/{FAKE_PROJECT_ID}", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    latest_version = response.json()["latest_version"]
+    assert latest_version["rendered_video_url"] == "http://localhost:8000/static/renders/reel-test.mp4"
+    assert latest_version["thumbnail_url"] == "http://localhost:8000/static/renders/thumb-test.jpg"
+    assert latest_version["voiceover_url"] == "http://localhost:8000/static/voiceovers/voiceover-test.wav"
+    assert latest_version["audio_url"] == latest_version["voiceover_url"]
+    assert latest_version["voiceover_provider"] == "mock"
+    assert "/var/lib" not in latest_version["rendered_video_url"]
 
 
 @patch("app.api.deps.decode_token")

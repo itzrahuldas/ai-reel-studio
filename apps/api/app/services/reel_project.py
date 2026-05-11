@@ -383,6 +383,7 @@ async def _run_provider_pipeline_with_db(
         version.edit_metadata = {
             **(version.edit_metadata or {}),
             "ai_provider": bundle.ai_provider,
+            "tts_provider": bundle.tts_provider,
             "image_analysis": image_analysis.model_dump(mode="json"),
             "voiceover_status": tts_status,
             "generation_warnings": warnings,
@@ -686,10 +687,110 @@ async def get_project_with_version(
     project = await get_project_by_id(db, user_id, project_id)
 
     latest_version = None
+    media_assets: dict[str, MediaAsset | None] = {
+        "rendered_video": None,
+        "thumbnail": None,
+        "voiceover_audio": None,
+    }
     if project.latest_version_id:
         latest_version = await db.get(ReelVersion, project.latest_version_id)
+        if latest_version:
+            media_assets = await get_reel_version_media_assets(db, latest_version)
 
-    return {"project": project, "latest_version": latest_version}
+    return {
+        "project": project,
+        "latest_version": latest_version,
+        "media_assets": media_assets,
+    }
+
+
+async def _get_version_asset_by_id(
+    db: AsyncSession,
+    version: ReelVersion,
+    asset_id: uuid.UUID | None,
+    asset_type: MediaAssetType,
+) -> MediaAsset | None:
+    if not asset_id:
+        return None
+    asset = await db.get(MediaAsset, asset_id)
+    if (
+        asset
+        and asset.project_id == version.project_id
+        and asset.version_id == version.id
+        and asset.asset_type == asset_type
+        and asset.status == MediaAssetStatus.READY
+    ):
+        return asset
+    return None
+
+
+async def _get_latest_version_asset(
+    db: AsyncSession,
+    version: ReelVersion,
+    asset_type: MediaAssetType,
+) -> MediaAsset | None:
+    stmt = (
+        select(MediaAsset)
+        .where(
+            MediaAsset.project_id == version.project_id,
+            MediaAsset.version_id == version.id,
+            MediaAsset.asset_type == asset_type,
+            MediaAsset.status == MediaAssetStatus.READY,
+        )
+        .order_by(MediaAsset.created_at.desc())
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def get_reel_version_media_assets(
+    db: AsyncSession,
+    version: ReelVersion,
+) -> dict[str, MediaAsset | None]:
+    """Return safe media assets for a version, falling back to latest typed assets."""
+    rendered_video = (
+        await _get_version_asset_by_id(
+            db,
+            version,
+            version.video_asset_id,
+            MediaAssetType.RENDERED_VIDEO,
+        )
+        or await _get_version_asset_by_id(
+            db,
+            version,
+            version.rendered_asset_id,
+            MediaAssetType.RENDERED_VIDEO,
+        )
+        or await _get_latest_version_asset(db, version, MediaAssetType.RENDERED_VIDEO)
+    )
+    thumbnail = (
+        await _get_version_asset_by_id(
+            db,
+            version,
+            version.thumbnail_asset_id,
+            MediaAssetType.THUMBNAIL,
+        )
+        or await _get_latest_version_asset(db, version, MediaAssetType.THUMBNAIL)
+    )
+    voiceover_audio = (
+        await _get_version_asset_by_id(
+            db,
+            version,
+            version.voiceover_asset_id,
+            MediaAssetType.AUDIO,
+        )
+        or await _get_version_asset_by_id(
+            db,
+            version,
+            version.audio_asset_id,
+            MediaAssetType.AUDIO,
+        )
+        or await _get_latest_version_asset(db, version, MediaAssetType.AUDIO)
+    )
+    return {
+        "rendered_video": rendered_video,
+        "thumbnail": thumbnail,
+        "voiceover_audio": voiceover_audio,
+    }
 
 
 async def get_project_jobs(

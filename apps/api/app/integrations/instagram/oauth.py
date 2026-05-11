@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 IG_REQUIRED_SCOPES = [
     "instagram_basic",
     "instagram_content_publish",
-    "pages_read_engagement",
+    "pages_show_list",
 ]
 
 

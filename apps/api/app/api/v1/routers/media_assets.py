@@ -30,7 +30,7 @@ from app.models.models import (
     WorkspaceMember,
 )
 from app.schemas.schemas import MediaAssetResponse
-from app.services.render_service import build_media_url, get_local_storage_path
+from app.services.render_service import build_media_asset_response, get_local_storage_path
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -188,15 +188,4 @@ async def view_media_asset(
 
 def _enrich_asset_response(asset: MediaAsset) -> dict:
     """Build a safe response dict with url field (no raw FS paths)."""
-    return {
-        "id": str(asset.id),
-        "workspace_id": str(asset.workspace_id),
-        "asset_type": asset.asset_type.value,
-        "s3_key": asset.s3_key,
-        "filename": asset.filename,
-        "mime_type": asset.mime_type,
-        "file_size": asset.file_size,
-        "status": asset.status.value,
-        "url": build_media_url(asset),
-        "created_at": asset.created_at.isoformat() if asset.created_at else None,
-    }
+    return build_media_asset_response(asset)

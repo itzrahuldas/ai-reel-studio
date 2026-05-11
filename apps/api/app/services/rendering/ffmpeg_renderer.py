@@ -2,11 +2,12 @@
 FFmpeg-based video renderer.
 
 Produces a 1080x1920 (9:16) MP4 from:
-- Source image (required)
+- Source image(s): one per storyboard scene, or a single fallback image
 - Audio file (optional — silent track if missing)
 - Subtitle SRT file (optional)
 
 Falls back to static image render if AI video provider is unavailable.
+Supports multi-scene slideshow when scene_image_paths is provided.
 """
 
 import asyncio
@@ -36,6 +37,8 @@ class RenderParams(NamedTuple):
     audio_path: Path | None = None
     srt_path: Path | None = None
     cta_text: str | None = None
+    # When provided, renders a per-scene slideshow instead of a single Ken Burns loop.
+    scene_image_paths: list[Path] | None = None
 
 
 class RenderResult(NamedTuple):
@@ -93,19 +96,27 @@ class FFmpegRenderer:
         """
         Render a vertical 9:16 MP4.
         Falls back to placeholder if FFmpeg is not available (local dev).
+        Uses multi-scene slideshow when params.scene_image_paths is set.
         """
         if not self.is_available:
             return self._placeholder_result(params)
 
+        use_multi = bool(params.scene_image_paths and len(params.scene_image_paths) > 1)
         logger.info(
             "ffmpeg_render.start",
             image=str(params.image_path.name),
             duration=params.duration_seconds,
             has_audio=params.audio_path is not None,
             has_subtitles=params.srt_path is not None,
+            multi_scene=use_multi,
+            scene_count=len(params.scene_image_paths) if use_multi else 1,
         )
 
-        cmd = self._build_command(params)
+        cmd = (
+            self._build_multi_scene_command(params)
+            if use_multi
+            else self._build_command(params)
+        )
         logger.debug("ffmpeg_render.command", cmd=" ".join(cmd))
 
         start_time = time.monotonic()
@@ -163,6 +174,8 @@ class FFmpegRenderer:
             "has_audio": params.audio_path is not None,
             "has_subtitles": params.srt_path is not None,
             "render_time_seconds": round(elapsed, 2),
+            "scene_count": len(params.scene_image_paths) if params.scene_image_paths else 1,
+            "multi_scene": bool(params.scene_image_paths and len(params.scene_image_paths) > 1),
         }
 
         return RenderResult(
@@ -239,6 +252,101 @@ class FFmpegRenderer:
 
         return cmd
 
+    def _build_multi_scene_command(self, params: RenderParams) -> list[str]:  # noqa: C901
+        """
+        Build an FFmpeg command for a multi-scene slideshow.
+
+        Each scene image is shown for duration_seconds / n_scenes.
+        Scenes are joined with a simple crossfade (xfade) filter.
+        Subtitles are burned in on top of the final composited stream.
+        """
+        scene_paths = params.scene_image_paths or [params.image_path]
+        n = len(scene_paths)
+        duration_per_scene = max(1.0, params.duration_seconds / n)
+        total_dur = params.duration_seconds
+
+        cmd: list[str] = [self._ffmpeg_path, "-y"]
+
+        # Input: one still image per scene (loop for duration_per_scene)
+        for img_path in scene_paths:
+            cmd += [
+                "-loop", "1",
+                "-t", str(duration_per_scene),
+                "-i", str(img_path),
+            ]
+
+        # Audio input
+        if params.audio_path and params.audio_path.exists():
+            cmd += ["-i", str(params.audio_path)]
+            audio_input_idx = n
+        else:
+            cmd += [
+                "-f", "lavfi",
+                "-i", f"aevalsrc=0:c=stereo:s=44100:d={total_dur}",
+            ]
+            audio_input_idx = n
+
+        # Build scale+crop filter for each input, then xfade chain
+        scale_crop = (
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},setsar=1,"
+            f"fps={OUTPUT_FPS}"
+        )
+
+        filter_parts: list[str] = []
+        # Scale all scenes
+        for i in range(n):
+            filter_parts.append(f"[{i}:v]{scale_crop}[v{i}]")
+
+        # Chain xfade between consecutive scenes
+        xfade_dur = min(0.4, duration_per_scene * 0.15)
+        if n == 1:
+            video_out = "[v0]"
+        else:
+            prev_label = "[v0]"
+            for i in range(1, n):
+                # offset = when the next scene should start
+                offset = round(i * duration_per_scene - xfade_dur, 3)
+                out_label = f"[xf{i}]" if i < n - 1 else "[vmerged]"
+                filter_parts.append(
+                    f"{prev_label}[v{i}]xfade=transition=fade:duration={xfade_dur}:offset={offset}{out_label}"
+                )
+                prev_label = out_label
+            video_out = "[vmerged]"
+
+        # Subtitle burn-in on the merged video
+        if params.srt_path and params.srt_path.exists():
+            srt_abs = str(params.srt_path.resolve()).replace("\\", "/").replace(":", "\\:")
+            sub_filter = (
+                f"subtitles='{srt_abs}':force_style="
+                f"'FontName=DejaVu Sans,FontSize=42,"
+                f"PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,"
+                f"Outline=2,Alignment=2,MarginV=160'"
+            )
+            filter_parts.append(f"{video_out}{sub_filter}[vout]")
+            video_out = "[vout]"
+
+        filter_complex = ";".join(filter_parts)
+        cmd += ["-filter_complex", filter_complex]
+        cmd += ["-map", video_out]
+        cmd += ["-map", f"{audio_input_idx}:a"]
+
+        if params.audio_path and params.audio_path.exists():
+            cmd += ["-c:a", "aac", "-b:a", OUTPUT_AUDIO_BITRATE, "-ar", "44100"]
+        else:
+            cmd += ["-c:a", "aac", "-b:a", "128k"]
+
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", str(OUTPUT_CRF),
+            "-t", str(total_dur),
+            "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            str(params.output_path),
+        ]
+        return cmd
+
     async def _generate_thumbnail(self, video_path: Path, thumbnail_path: Path) -> None:
         """Extract a thumbnail frame at 1 second."""
         if not self._ffmpeg_path:
@@ -263,7 +371,11 @@ class FFmpegRenderer:
             logger.warning("ffmpeg_thumbnail.failed", error=str(e))
 
     def _placeholder_result(self, params: RenderParams) -> RenderResult:
-        """Return a placeholder result when FFmpeg is not available (local dev)."""
+        """Return a placeholder result when FFmpeg is not available (local dev).
+
+        Note: mock visual scene images are still generated on disk so thumbnail
+        preview can use the first scene image even without FFmpeg.
+        """
         logger.warning(
             "ffmpeg_render.placeholder",
             message="FFmpeg not installed — returning placeholder result for local dev",
